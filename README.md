@@ -67,7 +67,7 @@ cd Unicode-type
 
 ### macOS
 
-1. Создай виртуальное окружение(если открыт не PyCharme):
+1. Создай виртуальное окружение(если открыт не PyCharm):
 
 ```bash
 python3 -m venv .venv
@@ -95,7 +95,7 @@ pip install pyobjc-framework-Quartz
 
 ### Windows
 
-1. Создай виртуальное окружение:
+1. Создай виртуальное окружение(если открыт не PyCharm):
 
 ```powershell
 python -m venv .venv
