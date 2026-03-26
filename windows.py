@@ -1,6 +1,7 @@
 import array
 import ctypes
 import json
+import math
 import platform
 import threading
 import time
@@ -197,6 +198,10 @@ class TextTyperGUI:
         self.focus_poll_job = None
         self.undo_group_job = None
         self.last_edit_time = 0.0
+        self.donut_job = None
+        self.donut_running = False
+        self.donut_a = 0.0
+        self.donut_b = 0.0
 
         self.delay_var = tk.StringVar(value="0.1")
         self.start_after_var = tk.StringVar(value="3")
@@ -351,6 +356,19 @@ class TextTyperGUI:
         self.text_widget.bind("<Control-Cyrillic_CHE>", self.handle_cut)
         self.text_widget.bind("<<Paste>>", self.handle_paste)
         self.text_widget.bind("<<Modified>>", self.on_text_modified)
+        self.default_insert_width = int(float(self.text_widget.cget("insertwidth")))
+        self.donut_overlay = tk.Label(
+            self.text_widget,
+            text="",
+            justify="center",
+            anchor="center",
+            borderwidth=0,
+            padx=16,
+            pady=16,
+            font=("Consolas", 10),
+            cursor="xterm",
+        )
+        self.donut_overlay.bind("<Button-1>", self.handle_donut_overlay_click)
 
         scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=self.text_widget.yview)
         scrollbar.pack(side="right", fill="y")
@@ -382,8 +400,11 @@ class TextTyperGUI:
         )
         self.sample_button.pack(side="left", padx=(8, 0))
         self.sample_button.configure(width=14)
+        self.donut_button = ttk.Button(actions, text="Пончик", command=self.toggle_donut_animation, style="Secondary.TButton")
+        self.donut_button.pack(side="left", padx=(8, 0))
+        self.donut_button.configure(width=12)
         self.start_button = ttk.Button(actions, text="Старт", command=self.start_typing, style="Accent.TButton")
-        self.start_button.pack(side="left", padx=(20, 0))
+        self.start_button.pack(side="left", padx=(12, 0))
         self.start_button.configure(width=14)
         self.stop_button = ttk.Button(actions, text="Стоп", command=self.stop_typing, state="disabled", style="Secondary.TButton")
         self.stop_button.pack(side="left", padx=(8, 0))
@@ -613,6 +634,11 @@ class TextTyperGUI:
             selectforeground=colors["text_fg"],
             font=("Segoe UI", 12),
         )
+        self.donut_overlay.configure(
+            background=colors["text_bg"],
+            foreground=colors["text_fg"],
+            font=("Consolas", 10),
+        )
 
     def apply_design_copy(self):
         copies = {
@@ -714,6 +740,7 @@ class TextTyperGUI:
             pass
 
     def on_close(self):
+        self.stop_donut_animation(announce=False)
         self.save_settings()
         if self.focus_poll_job is not None:
             self.root.after_cancel(self.focus_poll_job)
@@ -771,6 +798,94 @@ class TextTyperGUI:
         estimated = chars * delay + start_after + focus_delay
         self.stats_var.set(f"{chars} символов • ~{self.format_duration(estimated)}")
 
+    def handle_donut_overlay_click(self, event=None):
+        self.stop_donut_animation(announce=False)
+        self.text_widget.focus_set()
+        return "break"
+
+    def toggle_donut_animation(self):
+        if self.donut_running:
+            self.stop_donut_animation()
+        else:
+            self.start_donut_animation()
+
+    def start_donut_animation(self):
+        if self.is_typing or self.donut_running:
+            return
+
+        self.donut_running = True
+        self.donut_a = 0.0
+        self.donut_b = 0.0
+        self.text_widget.configure(insertwidth=0)
+        self.donut_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.donut_button.configure(text="Стоп пончик")
+        self.render_donut_frame()
+        self.set_status("Пончик запущен")
+
+    def stop_donut_animation(self, announce=True):
+        if self.donut_job is not None:
+            self.root.after_cancel(self.donut_job)
+            self.donut_job = None
+
+        was_running = self.donut_running or self.donut_overlay.winfo_manager()
+        self.donut_running = False
+        self.donut_button.configure(text="Пончик")
+        self.text_widget.configure(insertwidth=self.default_insert_width)
+        self.donut_overlay.place_forget()
+        self.donut_overlay.configure(text="")
+        if announce and was_running:
+            self.set_status("Пончик остановлен")
+
+    def render_donut_frame(self):
+        if not self.donut_running:
+            self.donut_job = None
+            return
+
+        self.donut_overlay.configure(text=self.build_donut_frame())
+        self.donut_a += 0.07
+        self.donut_b += 0.03
+        self.donut_job = self.root.after(50, self.render_donut_frame)
+
+    def build_donut_frame(self):
+        width = 38
+        height = 18
+        shades = ".,-~:;=!*#$@"
+        output = [" "] * (width * height)
+        zbuffer = [0.0] * (width * height)
+        sin_a = math.sin(self.donut_a)
+        cos_a = math.cos(self.donut_a)
+        sin_b = math.sin(self.donut_b)
+        cos_b = math.cos(self.donut_b)
+        x_scale = width * 0.34
+        y_scale = height * 0.58
+
+        j = 0.0
+        while j < 6.28:
+            sin_j = math.sin(j)
+            cos_j = math.cos(j)
+            i = 0.0
+            while i < 6.28:
+                sin_i = math.sin(i)
+                cos_i = math.cos(i)
+                circle = cos_j + 2.0
+                depth = 1.0 / (sin_i * circle * sin_a + sin_j * cos_a + 5.0)
+                blend = sin_i * circle * cos_a - sin_j * sin_a
+                x = int(width / 2 + x_scale * depth * (cos_i * circle * cos_b - blend * sin_b))
+                y = int(height / 2 + y_scale * depth * (cos_i * circle * sin_b + blend * cos_b))
+                luminance = int(
+                    8 * ((sin_j * sin_a - sin_i * cos_j * cos_a) * cos_b - sin_i * cos_j * sin_a - sin_j * cos_a - cos_i * cos_j * sin_b)
+                )
+
+                if 0 <= x < width and 0 <= y < height:
+                    offset = x + width * y
+                    if depth > zbuffer[offset]:
+                        zbuffer[offset] = depth
+                        output[offset] = shades[luminance if luminance > 0 else 0]
+                i += 0.05
+            j += 0.14
+
+        return "\n".join("".join(output[index:index + width]) for index in range(0, width * height, width))
+
     def format_duration(self, seconds):
         if seconds < 60:
             return f"{seconds:.1f} сек"
@@ -790,6 +905,7 @@ class TextTyperGUI:
     def clear_text(self):
         if self.is_typing:
             return
+        self.stop_donut_animation(announce=False)
         self.push_undo_separator()
         self.text_widget.delete("1.0", "end")
         self.push_undo_separator()
@@ -861,6 +977,8 @@ class TextTyperGUI:
         if not self.is_text_edit_event(event):
             return None
 
+        self.stop_donut_animation(announce=False)
+
         now = time.monotonic()
         if now - self.last_edit_time >= UNDO_GROUP_DELAY_MS / 1000:
             self.push_undo_separator()
@@ -898,6 +1016,7 @@ class TextTyperGUI:
         if self.is_typing:
             return
 
+        self.stop_donut_animation(announce=False)
         self.cancel_undo_group_timer()
 
         try:
@@ -914,6 +1033,7 @@ class TextTyperGUI:
         if self.is_typing:
             return
 
+        self.stop_donut_animation(announce=False)
         try:
             clipboard_text = self.root.clipboard_get()
         except tk.TclError:
@@ -934,6 +1054,7 @@ class TextTyperGUI:
     def insert_test_text(self):
         if self.is_typing:
             return
+        self.stop_donut_animation(announce=False)
         sample = (
             "Привет, это безопасный тестовый ввод.\n"
             "Он печатает символы по одному в обычное поле Windows.\n"
@@ -964,6 +1085,7 @@ class TextTyperGUI:
         if self.is_typing:
             return
 
+        self.stop_donut_animation(announce=False)
         text = self.text_widget.get("1.0", "end-1c")
         if not text:
             messagebox.showwarning("Пустой текст", "Сначала введи текст.")
