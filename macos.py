@@ -20,6 +20,8 @@ COMMAND_MASKS = (0x0004, 0x0008, 0x0010, 0x0080)
 SELECT_ALL_KEYCODE = 0
 COPY_KEYCODE = 8
 CUT_KEYCODE = 7
+UNDO_KEYCODE = 6
+UNDO_GROUP_DELAY_MS = 900
 CONFIG_PATH = Path(__file__).with_name("macos_settings.json")
 DESIGN_LABEL_TO_NAME = {
     "Utility": "utility",
@@ -40,6 +42,8 @@ class TextTyperGUI:
         self.stop_requested = False
         self.focus_poll_job = None
         self.app_process_name = None
+        self.undo_group_job = None
+        self.last_edit_time = 0.0
 
         self.delay_var = tk.StringVar(value="0.1")
         self.start_after_var = tk.StringVar(value="3")
@@ -164,8 +168,17 @@ class TextTyperGUI:
             pady=10,
             font=("SF Pro Text", 13),
             background="#FBFCFE",
+            undo=True,
+            autoseparators=False,
+            maxundo=-1,
         )
         self.text_widget.pack(side="left", fill="both", expand=True)
+        self.text_widget.edit_reset()
+        self.text_widget.bind("<KeyPress>", self.handle_text_keypress, add="+")
+        self.text_widget.bind("<Command-z>", self.handle_undo)
+        self.text_widget.bind("<Command-Z>", self.handle_undo)
+        self.text_widget.bind("<Command-Cyrillic_ya>", self.handle_undo)
+        self.text_widget.bind("<Command-Cyrillic_YA>", self.handle_undo)
         self.text_widget.bind("<Command-v>", self.handle_paste)
         self.text_widget.bind("<Command-V>", self.handle_paste)
         self.text_widget.bind("<Command-Cyrillic_em>", self.handle_paste)
@@ -254,6 +267,8 @@ class TextTyperGUI:
     def configure_menu(self):
         menubar = tk.Menu(self.root)
         edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="Undo", accelerator="Cmd+Z", command=self.undo_text)
+        edit_menu.add_separator()
         edit_menu.add_command(label="Select All", accelerator="Cmd+A", command=self.select_all_text)
         edit_menu.add_command(label="Copy", accelerator="Cmd+C", command=self.copy_selection)
         edit_menu.add_command(label="Cut", accelerator="Cmd+X", command=self.cut_selection)
@@ -672,7 +687,9 @@ class TextTyperGUI:
     def clear_text(self):
         if self.is_typing:
             return
+        self.push_undo_separator()
         self.text_widget.delete("1.0", "end")
+        self.push_undo_separator()
         self.update_text_stats()
         self.set_status("Текст очищен")
 
@@ -706,11 +723,17 @@ class TextTyperGUI:
 
         self.root.clipboard_clear()
         self.root.clipboard_append(selected_text)
+        self.push_undo_separator()
         self.text_widget.delete("sel.first", "sel.last")
+        self.push_undo_separator()
         self.set_status("Текст вырезан")
 
     def handle_paste(self, event=None):
         self.paste_text()
+        return "break"
+
+    def handle_undo(self, event=None):
+        self.undo_text()
         return "break"
 
     def handle_select_all(self, event=None):
@@ -767,6 +790,65 @@ class TextTyperGUI:
 
         return None
 
+    def handle_text_keypress(self, event):
+        if self.is_typing:
+            return None
+
+        if any(event.state & mask for mask in COMMAND_MASKS):
+            return None
+
+        if not self.is_text_edit_event(event):
+            return None
+
+        now = time.monotonic()
+        if now - self.last_edit_time >= UNDO_GROUP_DELAY_MS / 1000:
+            self.push_undo_separator()
+
+        self.last_edit_time = now
+
+        if event.keysym in {"space", "Return", "KP_Enter", "Tab"}:
+            self.root.after_idle(self.commit_undo_group)
+        else:
+            self.schedule_undo_group()
+        return None
+
+    def is_text_edit_event(self, event):
+        if event.keysym in {"BackSpace", "Delete", "space", "Return", "KP_Enter", "Tab"}:
+            return True
+        return bool(event.char and event.char >= " ")
+
+    def schedule_undo_group(self):
+        self.cancel_undo_group_timer()
+        self.undo_group_job = self.root.after(UNDO_GROUP_DELAY_MS, self.commit_undo_group)
+
+    def cancel_undo_group_timer(self):
+        if self.undo_group_job is not None:
+            self.root.after_cancel(self.undo_group_job)
+            self.undo_group_job = None
+
+    def commit_undo_group(self):
+        self.undo_group_job = None
+        try:
+            self.text_widget.edit_separator()
+        except tk.TclError:
+            pass
+
+    def undo_text(self):
+        if self.is_typing:
+            return
+
+        self.cancel_undo_group_timer()
+
+        try:
+            self.text_widget.edit_undo()
+        except tk.TclError:
+            self.set_status("Нечего отменять")
+            return
+
+        self.update_text_stats()
+        self.text_widget.focus_set()
+        self.set_status("Последнее изменение отменено")
+
     def paste_text(self):
         if self.is_typing:
             return
@@ -781,7 +863,9 @@ class TextTyperGUI:
             self.set_status("Буфер обмена пуст")
             return
 
+        self.push_undo_separator()
         self.text_widget.insert("insert", clipboard_text)
+        self.push_undo_separator()
         self.update_text_stats()
         self.text_widget.focus_set()
         self.set_status("Текст вставлен из буфера")
@@ -794,10 +878,16 @@ class TextTyperGUI:
             "operator new — для динамического создания объектов\n"
             "C++ и Python нормально mixed в одной строке\n"
         )
+        self.push_undo_separator()
         self.text_widget.delete("1.0", "end")
         self.text_widget.insert("1.0", sample)
+        self.push_undo_separator()
         self.update_text_stats()
         self.set_status("Тестовый текст вставлен")
+
+    def push_undo_separator(self):
+        self.cancel_undo_group_timer()
+        self.commit_undo_group()
 
     def post_keycode(self, keycode):
         down = CGEventCreateKeyboardEvent(None, keycode, True)
