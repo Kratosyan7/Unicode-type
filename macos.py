@@ -33,8 +33,8 @@ class TextTyperGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Unicode Text Typer")
-        self.root.geometry("1040x620")
-        self.root.minsize(980, 570)
+        self.root.geometry("920x760")
+        self.root.minsize(860, 680)
 
         self.is_typing = False
         self.stop_requested = False
@@ -205,8 +205,10 @@ class TextTyperGUI:
 
         self.paste_button = ttk.Button(actions, text="Вставить", command=self.paste_text, style="Secondary.TButton")
         self.paste_button.pack(side="left")
+        self.paste_button.configure(width=12)
         self.clear_button = ttk.Button(actions, text="Очистить", command=self.clear_text, style="Secondary.TButton")
         self.clear_button.pack(side="left", padx=(8, 0))
+        self.clear_button.configure(width=12)
         self.sample_button = ttk.Button(
             actions,
             text="Тестовый текст",
@@ -214,12 +216,21 @@ class TextTyperGUI:
             style="Secondary.TButton",
         )
         self.sample_button.pack(side="left", padx=(8, 0))
+        self.sample_button.configure(width=14)
         self.start_button = ttk.Button(actions, text="Старт", command=self.start_typing, style="Accent.TButton")
         self.start_button.pack(side="left", padx=(20, 0))
+        self.start_button.configure(width=14)
         self.stop_button = ttk.Button(actions, text="Стоп", command=self.stop_typing, state="disabled", style="Secondary.TButton")
         self.stop_button.pack(side="left", padx=(8, 0))
+        self.stop_button.configure(width=12)
         self.status_label = ttk.Label(actions, textvariable=self.status_var, style="Status.TLabel")
         self.status_label.pack(side="right")
+        self.status_label.configure(width=28, anchor="e")
+
+        self.stats_label.configure(width=22, anchor="w")
+        self.focus_label.configure(width=28, anchor="e")
+        self.info_label.configure(wraplength=920, justify="left")
+        self.settings_hint_label.configure(wraplength=920, justify="left")
 
         self.apply_design_copy()
         self.apply_theme()
@@ -353,14 +364,12 @@ class TextTyperGUI:
     def apply_theme(self):
         self.theme_tokens = self.get_theme_tokens(self.theme_name)
         colors = self.theme_tokens
-        is_studio = self.design_name == "studio"
-        is_utility = self.design_name == "utility"
         label_font = ("SF Pro Text", 12)
-        hero_title_font = ("SF Pro Display", 28 if is_studio else 22, "bold")
-        hero_subtitle_font = ("SF Pro Text", 13 if is_studio else 12)
-        topbar_title_font = ("SF Pro Display", 15 if is_utility else 16, "bold")
+        hero_title_font = ("SF Pro Display", 22, "bold")
+        hero_subtitle_font = ("SF Pro Text", 12)
+        topbar_title_font = ("SF Pro Display", 15, "bold")
         section_title_font = ("SF Pro Text", 12, "bold")
-        button_font = ("SF Pro Text", 12, "bold" if is_studio or is_utility else "normal")
+        button_font = ("SF Pro Text", 12)
 
         self.style.configure("TFrame", background=colors["root_bg"])
         self.style.configure("TLabelframe", background=colors["panel_bg"], bordercolor=colors["surface_bg"])
@@ -384,7 +393,7 @@ class TextTyperGUI:
         self.style.configure("Info.TFrame", background=colors["surface_bg"])
         self.style.configure("Info.TLabel", background=colors["surface_bg"], foreground=colors["muted_fg"], font=("SF Pro Text", 11))
         self.style.configure("PanelHint.TLabel", background=colors["panel_bg"], foreground=colors["muted_fg"], font=("SF Pro Text", 10))
-        self.style.configure("Status.TLabel", background=colors["root_bg"], foreground=colors["muted_fg"], font=("SF Pro Text", 11, "bold" if is_utility else "normal"))
+        self.style.configure("Status.TLabel", background=colors["root_bg"], foreground=colors["muted_fg"], font=("SF Pro Text", 11))
         self.style.configure("Meta.TLabel", background=colors["root_bg"], foreground=colors["muted_fg"], font=("SF Pro Text", 10))
         self.style.configure("TCheckbutton", background=colors["root_bg"], foreground=colors["text_fg"])
         self.style.map("TCheckbutton", background=[("active", colors["root_bg"])], foreground=[("active", colors["text_fg"])])
@@ -435,9 +444,9 @@ class TextTyperGUI:
             insertbackground=colors["insert_bg"],
             selectbackground=colors["select_bg"],
             selectforeground=colors["text_fg"],
-            font=("SF Pro Text", 14 if is_studio else 13),
+            font=("SF Pro Text", 13),
             spacing1=2,
-            spacing3=6 if is_studio else 4,
+            spacing3=4,
         )
 
     def apply_design_copy(self):
@@ -452,8 +461,8 @@ class TextTyperGUI:
                 "settings_hint": "Минимум интерфейса: три числа и один основной action.",
                 "info": "Utility-пресет прячет декоративные блоки и оставляет только то, что нужно перед запуском.",
                 "text_title": "Текст для набора",
-                "sample_text": "Быстрый пример",
-                "start_text": "Запустить",
+                "sample_text": "Тестовый текст",
+                "start_text": "Старт",
             },
             "studio": {
                 "platform": "macOS flow mode",
@@ -465,8 +474,8 @@ class TextTyperGUI:
                 "settings_hint": "Подстрой старт, паузу после фокуса и ритм печати под целевое приложение.",
                 "info": "Studio подчёркивает сценарий: сначала подготовка, затем переключение фокуса, потом посимвольный ввод.",
                 "text_title": "Черновик сцены",
-                "sample_text": "Сценарий",
-                "start_text": "Старт сцены",
+                "sample_text": "Тестовый текст",
+                "start_text": "Старт",
             },
             "native": {
                 "platform": "macOS edition",
@@ -562,34 +571,15 @@ class TextTyperGUI:
             widget.pack_forget()
 
         dense = self.compact_var.get()
-        self.main_frame.configure(padding=10 if dense else 14)
-        self.topbar_frame.pack(fill="x", pady=(0, 8 if dense else 10))
-
-        if self.design_name == "utility":
-            self.settings_frame.pack(fill="x", pady=(0, 8 if dense else 10))
-            self.text_frame.pack(fill="both", expand=True)
-            self.actions_frame.pack(fill="x", pady=(8 if dense else 10, 0))
-            self.meta_frame.pack(fill="x", pady=(8, 0))
-            return
-
+        gap = 8 if dense else 10
+        self.main_frame.configure(padding=10 if dense else 12)
+        self.topbar_frame.pack(fill="x", pady=(0, gap))
+        self.settings_frame.pack(fill="x", pady=(0, gap))
         if not dense:
-            self.hero_frame.pack(fill="x", pady=(0, 10 if self.design_name == "studio" else 12))
-
-        if self.design_name == "studio":
-            self.settings_frame.pack(fill="x", pady=(0, 10))
-            if not dense:
-                self.info_frame.pack(fill="x", pady=(0, 10))
-            self.text_frame.pack(fill="both", expand=True)
-            self.actions_frame.pack(fill="x", pady=(10, 0))
-            self.meta_frame.pack(fill="x", pady=(8, 0))
-            return
-
-        if not dense:
-            self.info_frame.pack(fill="x", pady=(0, 12))
-        self.settings_frame.pack(fill="x", pady=(0, 12))
+            self.info_frame.pack(fill="x", pady=(0, gap))
         self.text_frame.pack(fill="both", expand=True)
-        self.meta_frame.pack(fill="x", pady=(10, 0))
-        self.actions_frame.pack(fill="x", pady=(12, 0))
+        self.meta_frame.pack(fill="x", pady=(gap, 0))
+        self.actions_frame.pack(fill="x", pady=(gap, 0))
 
     def capture_app_identity(self):
         if self.app_process_name is None:

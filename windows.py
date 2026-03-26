@@ -187,8 +187,8 @@ class TextTyperGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Windows Text Typer")
-        self.root.geometry("1040x620")
-        self.root.minsize(980, 570)
+        self.root.geometry("920x760")
+        self.root.minsize(860, 680)
 
         self.typer = WindowsTyper()
         self.is_typing = False
@@ -358,8 +358,10 @@ class TextTyperGUI:
 
         self.paste_button = ttk.Button(actions, text="Вставить", command=self.paste_text, style="Secondary.TButton")
         self.paste_button.pack(side="left")
+        self.paste_button.configure(width=12)
         self.clear_button = ttk.Button(actions, text="Очистить", command=self.clear_text, style="Secondary.TButton")
         self.clear_button.pack(side="left", padx=(8, 0))
+        self.clear_button.configure(width=12)
         self.sample_button = ttk.Button(
             actions,
             text="Тестовый текст",
@@ -367,12 +369,21 @@ class TextTyperGUI:
             style="Secondary.TButton",
         )
         self.sample_button.pack(side="left", padx=(8, 0))
+        self.sample_button.configure(width=14)
         self.start_button = ttk.Button(actions, text="Старт", command=self.start_typing, style="Accent.TButton")
         self.start_button.pack(side="left", padx=(20, 0))
+        self.start_button.configure(width=14)
         self.stop_button = ttk.Button(actions, text="Стоп", command=self.stop_typing, state="disabled", style="Secondary.TButton")
         self.stop_button.pack(side="left", padx=(8, 0))
+        self.stop_button.configure(width=12)
         self.status_label = ttk.Label(actions, textvariable=self.status_var, style="Status.TLabel")
         self.status_label.pack(side="right")
+        self.status_label.configure(width=28, anchor="e")
+
+        self.stats_label.configure(width=22, anchor="w")
+        self.focus_label.configure(width=28, anchor="e")
+        self.info_label.configure(wraplength=920, justify="left")
+        self.settings_hint_label.configure(wraplength=920, justify="left")
 
         self.apply_design_copy()
         self.apply_theme()
@@ -506,14 +517,12 @@ class TextTyperGUI:
     def apply_theme(self):
         self.theme_tokens = self.get_theme_tokens(self.theme_name)
         colors = self.theme_tokens
-        is_studio = self.design_name == "studio"
-        is_utility = self.design_name == "utility"
         label_font = ("Segoe UI", 11)
-        hero_title_font = ("Segoe UI Semibold", 26 if is_studio else 20)
-        hero_subtitle_font = ("Segoe UI", 11 if is_utility else 12)
-        topbar_title_font = ("Segoe UI Semibold", 14 if is_utility else 15)
+        hero_title_font = ("Segoe UI Semibold", 20)
+        hero_subtitle_font = ("Segoe UI", 11)
+        topbar_title_font = ("Segoe UI Semibold", 15)
         section_title_font = ("Segoe UI Semibold", 11)
-        button_font = ("Segoe UI Semibold", 11) if is_studio or is_utility else ("Segoe UI", 11)
+        button_font = ("Segoe UI", 11)
 
         self.style.configure("TFrame", background=colors["root_bg"])
         self.style.configure("TLabelframe", background=colors["panel_bg"], bordercolor=colors["surface_bg"])
@@ -537,7 +546,7 @@ class TextTyperGUI:
         self.style.configure("Info.TFrame", background=colors["surface_bg"])
         self.style.configure("Info.TLabel", background=colors["surface_bg"], foreground=colors["muted_fg"], font=("Segoe UI", 10))
         self.style.configure("PanelHint.TLabel", background=colors["panel_bg"], foreground=colors["muted_fg"], font=("Segoe UI", 9))
-        self.style.configure("Status.TLabel", background=colors["root_bg"], foreground=colors["muted_fg"], font=("Segoe UI Semibold", 10) if is_utility else ("Segoe UI", 10))
+        self.style.configure("Status.TLabel", background=colors["root_bg"], foreground=colors["muted_fg"], font=("Segoe UI", 10))
         self.style.configure("Meta.TLabel", background=colors["root_bg"], foreground=colors["muted_fg"], font=("Segoe UI", 10))
         self.style.configure("TCheckbutton", background=colors["root_bg"], foreground=colors["text_fg"])
         self.style.map("TCheckbutton", background=[("active", colors["root_bg"])], foreground=[("active", colors["text_fg"])])
@@ -588,7 +597,7 @@ class TextTyperGUI:
             insertbackground=colors["insert_bg"],
             selectbackground=colors["select_bg"],
             selectforeground=colors["text_fg"],
-            font=("Segoe UI", 13 if is_studio else 12),
+            font=("Segoe UI", 12),
         )
 
     def apply_design_copy(self):
@@ -603,8 +612,8 @@ class TextTyperGUI:
                 "settings_hint": "Чистый utilitarian-режим для тех, кто хочет сразу перейти к тексту.",
                 "info": "Utility-пресет убирает лишнюю сценографию и оставляет только управляющие элементы перед печатью.",
                 "text_title": "Текст для набора",
-                "sample_text": "Быстрый пример",
-                "start_text": "Запустить",
+                "sample_text": "Тестовый текст",
+                "start_text": "Старт",
             },
             "studio": {
                 "platform": "Windows flow mode",
@@ -616,8 +625,8 @@ class TextTyperGUI:
                 "settings_hint": "Настрой паузу до старта, момент захвата фокуса и ритм посимвольного ввода.",
                 "info": "Studio-представление помогает визуально читать процесс как последовательность шагов, а не как набор отдельных панелей.",
                 "text_title": "Черновик сцены",
-                "sample_text": "Сценарий",
-                "start_text": "Старт сцены",
+                "sample_text": "Тестовый текст",
+                "start_text": "Старт",
             },
             "native": {
                 "platform": "Windows edition",
@@ -713,34 +722,15 @@ class TextTyperGUI:
             widget.pack_forget()
 
         dense = self.compact_var.get()
-        self.main_frame.configure(padding=10 if dense else 14)
-        self.topbar_frame.pack(fill="x", pady=(0, 8 if dense else 10))
-
-        if self.design_name == "utility":
-            self.settings_frame.pack(fill="x", pady=(0, 8 if dense else 10))
-            self.text_frame.pack(fill="both", expand=True)
-            self.actions_frame.pack(fill="x", pady=(8 if dense else 10, 0))
-            self.meta_frame.pack(fill="x", pady=(8, 0))
-            return
-
+        gap = 8 if dense else 10
+        self.main_frame.configure(padding=10 if dense else 12)
+        self.topbar_frame.pack(fill="x", pady=(0, gap))
+        self.settings_frame.pack(fill="x", pady=(0, gap))
         if not dense:
-            self.hero_frame.pack(fill="x", pady=(0, 10 if self.design_name == "studio" else 12))
-
-        if self.design_name == "studio":
-            self.settings_frame.pack(fill="x", pady=(0, 10))
-            if not dense:
-                self.info_frame.pack(fill="x", pady=(0, 10))
-            self.text_frame.pack(fill="both", expand=True)
-            self.actions_frame.pack(fill="x", pady=(10, 0))
-            self.meta_frame.pack(fill="x", pady=(8, 0))
-            return
-
-        if not dense:
-            self.info_frame.pack(fill="x", pady=(0, 12))
-        self.settings_frame.pack(fill="x", pady=(0, 12))
+            self.info_frame.pack(fill="x", pady=(0, gap))
         self.text_frame.pack(fill="both", expand=True)
-        self.meta_frame.pack(fill="x", pady=(10, 0))
-        self.actions_frame.pack(fill="x", pady=(12, 0))
+        self.meta_frame.pack(fill="x", pady=(gap, 0))
+        self.actions_frame.pack(fill="x", pady=(gap, 0))
 
     def start_focus_polling(self):
         self.update_focus_status()
