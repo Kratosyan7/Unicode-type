@@ -1,0 +1,740 @@
+import json
+import subprocess
+import time
+import threading
+import tkinter as tk
+from pathlib import Path
+from tkinter import ttk, messagebox
+
+from Quartz import (
+    CGEventCreateKeyboardEvent,
+    CGEventKeyboardSetUnicodeString,
+    CGEventPost,
+    kCGHIDEventTap,
+)
+
+ENTER_KEYCODE = 36
+TAB_KEYCODE = 48
+PASTE_KEYCODE = 9
+COMMAND_MASKS = (0x0004, 0x0008, 0x0010, 0x0080)
+SELECT_ALL_KEYCODE = 0
+COPY_KEYCODE = 8
+CUT_KEYCODE = 7
+CONFIG_PATH = Path(__file__).with_name("macos_settings.json")
+
+
+class TextTyperGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Unicode Text Typer")
+        self.root.geometry("1040x620")
+        self.root.minsize(980, 570)
+
+        self.is_typing = False
+        self.stop_requested = False
+        self.focus_poll_job = None
+        self.app_process_name = None
+
+        self.delay_var = tk.StringVar(value="0.1")
+        self.start_after_var = tk.StringVar(value="3")
+        self.focus_delay_var = tk.StringVar(value="0.5")
+        self.status_var = tk.StringVar(value="Готово")
+        self.stats_var = tk.StringVar(value="0 символов • 0.0 сек")
+        self.focus_var = tk.StringVar(value="Фокус: окно приложения")
+        self.theme_var = tk.StringVar(value="Светлая")
+        self.compact_var = tk.BooleanVar(value=False)
+        self.theme_name = "light"
+        self.theme_tokens = {}
+
+        self.load_settings()
+        self.build_ui()
+        for var in (self.delay_var, self.start_after_var, self.focus_delay_var):
+            var.trace_add("write", self.update_text_stats)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.after(300, self.capture_app_identity)
+        self.start_focus_polling()
+
+    def build_ui(self):
+        main = ttk.Frame(self.root, padding=12)
+        main.pack(fill="both", expand=True)
+        self.main_frame = main
+
+        self.configure_styles()
+        self.configure_menu()
+
+        self.hero_frame = ttk.Frame(main, padding=(18, 18, 18, 14), style="Hero.TFrame")
+        self.hero_frame.pack(fill="x", pady=(0, 12))
+
+        self.title_label = ttk.Label(self.hero_frame, text="Unicode Text Typer", style="HeroTitle.TLabel")
+        self.title_label.pack(anchor="w")
+        self.subtitle_label = ttk.Label(
+            self.hero_frame,
+            text=(
+                "Печатай Unicode напрямую, без переключения раскладки. "
+                "Вставляй текст из буфера и запускай набор в пару кликов."
+            ),
+            style="HeroSubtitle.TLabel",
+        )
+        self.subtitle_label.pack(anchor="w", pady=(6, 0))
+
+        settings = ttk.LabelFrame(main, text="Параметры", padding=12)
+        settings.pack(fill="x", pady=(0, 12))
+        self.settings_frame = settings
+
+        ttk.Label(settings, text="Задержка").grid(row=0, column=0, sticky="w")
+        self.delay_entry = ttk.Entry(settings, textvariable=self.delay_var, width=10)
+        self.delay_entry.grid(row=1, column=0, padx=(0, 16), sticky="w")
+
+        ttk.Label(settings, text="Старт через").grid(row=0, column=1, sticky="w")
+        self.start_after_entry = ttk.Entry(settings, textvariable=self.start_after_var, width=10)
+        self.start_after_entry.grid(row=1, column=1, padx=(0, 16), sticky="w")
+
+        ttk.Label(settings, text="После фокуса").grid(row=0, column=2, sticky="w")
+        self.focus_delay_entry = ttk.Entry(settings, textvariable=self.focus_delay_var, width=10)
+        self.focus_delay_entry.grid(row=1, column=2, padx=(0, 16), sticky="w")
+
+        ttk.Label(settings, text="Тема").grid(row=0, column=3, sticky="w")
+        self.theme_combo = ttk.Combobox(
+            settings,
+            textvariable=self.theme_var,
+            values=("Светлая", "Тёмная"),
+            state="readonly",
+            width=12,
+        )
+        self.theme_combo.grid(row=1, column=3, sticky="w")
+        self.theme_combo.bind("<<ComboboxSelected>>", self.change_theme)
+
+        self.compact_check = ttk.Checkbutton(
+            settings,
+            text="Компактный режим",
+            variable=self.compact_var,
+            command=self.toggle_compact_mode,
+        )
+        self.compact_check.grid(row=1, column=4, padx=(16, 0), sticky="w")
+
+        self.info_frame = ttk.Frame(main, style="Info.TFrame", padding=(14, 10))
+        self.info_frame.pack(fill="x", pady=(0, 12))
+        self.info_label = ttk.Label(
+            self.info_frame,
+            text=(
+                "Cmd+V и кнопка «Вставить» работают независимо от текущей раскладки клавиатуры. "
+                "После «Старт» приложение ждёт переключения фокуса и только потом начинает печать."
+            ),
+            style="Info.TLabel",
+        )
+        self.info_label.pack(anchor="w")
+
+        text_frame = ttk.LabelFrame(main, text="Текст", padding=8)
+        text_frame.pack(fill="both", expand=True)
+        self.text_frame = text_frame
+
+        self.text_widget = tk.Text(
+            text_frame,
+            wrap="word",
+            height=11,
+            relief="flat",
+            borderwidth=0,
+            padx=10,
+            pady=10,
+            font=("SF Pro Text", 13),
+            background="#FBFCFE",
+        )
+        self.text_widget.pack(side="left", fill="both", expand=True)
+        self.text_widget.bind("<Command-v>", self.handle_paste)
+        self.text_widget.bind("<Command-V>", self.handle_paste)
+        self.text_widget.bind("<Command-Cyrillic_em>", self.handle_paste)
+        self.text_widget.bind("<Command-Cyrillic_EM>", self.handle_paste)
+        self.text_widget.bind("<Command-a>", self.handle_select_all)
+        self.text_widget.bind("<Command-A>", self.handle_select_all)
+        self.text_widget.bind("<Command-Cyrillic_ef>", self.handle_select_all)
+        self.text_widget.bind("<Command-Cyrillic_EF>", self.handle_select_all)
+        self.text_widget.bind("<Command-c>", self.handle_copy)
+        self.text_widget.bind("<Command-C>", self.handle_copy)
+        self.text_widget.bind("<Command-Cyrillic_es>", self.handle_copy)
+        self.text_widget.bind("<Command-Cyrillic_ES>", self.handle_copy)
+        self.text_widget.bind("<Command-x>", self.handle_cut)
+        self.text_widget.bind("<Command-X>", self.handle_cut)
+        self.text_widget.bind("<Command-Cyrillic_che>", self.handle_cut)
+        self.text_widget.bind("<Command-Cyrillic_CHE>", self.handle_cut)
+        self.text_widget.bind("<<Paste>>", self.handle_paste)
+        self.root.bind_all("<Command-KeyPress>", self.handle_command_shortcuts, add="+")
+        self.root.bind_all("<KeyPress>", self.handle_global_keypress, add="+")
+        self.text_widget.bind("<<Modified>>", self.on_text_modified)
+
+        scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=self.text_widget.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.text_widget.configure(yscrollcommand=scrollbar.set)
+
+        meta = ttk.Frame(main)
+        meta.pack(fill="x", pady=(10, 0))
+        self.meta_frame = meta
+        self.stats_label = ttk.Label(meta, textvariable=self.stats_var, style="Meta.TLabel")
+        self.stats_label.pack(side="left")
+        self.focus_label = ttk.Label(meta, textvariable=self.focus_var, style="Meta.TLabel")
+        self.focus_label.pack(side="right")
+
+        actions = ttk.Frame(main)
+        actions.pack(fill="x", pady=(12, 0))
+        self.actions_frame = actions
+
+        self.paste_button = ttk.Button(actions, text="Вставить", command=self.paste_text, style="Secondary.TButton")
+        self.paste_button.pack(side="left")
+        self.clear_button = ttk.Button(actions, text="Очистить", command=self.clear_text, style="Secondary.TButton")
+        self.clear_button.pack(side="left", padx=(8, 0))
+        self.sample_button = ttk.Button(
+            actions,
+            text="Тестовый текст",
+            command=self.insert_test_text,
+            style="Secondary.TButton",
+        )
+        self.sample_button.pack(side="left", padx=(8, 0))
+        self.start_button = ttk.Button(actions, text="Старт", command=self.start_typing, style="Accent.TButton")
+        self.start_button.pack(side="left", padx=(20, 0))
+        self.stop_button = ttk.Button(actions, text="Стоп", command=self.stop_typing, state="disabled", style="Secondary.TButton")
+        self.stop_button.pack(side="left", padx=(8, 0))
+        self.status_label = ttk.Label(actions, textvariable=self.status_var, style="Status.TLabel")
+        self.status_label.pack(side="right")
+
+        self.apply_theme()
+        self.apply_layout_mode()
+        self.update_text_stats()
+
+    def configure_styles(self):
+        style = ttk.Style()
+        try:
+            if "clam" in style.theme_names():
+                style.theme_use("clam")
+        except Exception:
+            return
+
+        style.configure("TEntry", padding=6)
+        style.configure("TButton", padding=(12, 8), font=("SF Pro Text", 12))
+        style.configure("TCombobox", padding=6)
+        style.configure("TCheckbutton", font=("SF Pro Text", 11))
+        self.style = style
+
+    def configure_menu(self):
+        menubar = tk.Menu(self.root)
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="Select All", accelerator="Cmd+A", command=self.select_all_text)
+        edit_menu.add_command(label="Copy", accelerator="Cmd+C", command=self.copy_selection)
+        edit_menu.add_command(label="Cut", accelerator="Cmd+X", command=self.cut_selection)
+        edit_menu.add_command(label="Paste", accelerator="Cmd+V", command=self.paste_text)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        self.root.configure(menu=menubar)
+
+    def get_theme_tokens(self, theme_name):
+        if theme_name == "dark":
+            return {
+                "root_bg": "#111827",
+                "panel_bg": "#111827",
+                "surface_bg": "#1F2937",
+                "text_bg": "#0F172A",
+                "text_fg": "#F9FAFB",
+                "muted_fg": "#CBD5E1",
+                "entry_bg": "#0F172A",
+                "entry_fg": "#F9FAFB",
+                "button_bg": "#334155",
+                "button_fg": "#F9FAFB",
+                "insert_bg": "#F9FAFB",
+                "select_bg": "#2563EB",
+            }
+
+        return {
+            "root_bg": "#F3F6FB",
+            "panel_bg": "#F3F6FB",
+            "surface_bg": "#E8EEF8",
+            "text_bg": "#FFFFFF",
+            "text_fg": "#111111",
+            "muted_fg": "#334155",
+            "entry_bg": "#FFFFFF",
+            "entry_fg": "#111111",
+            "button_bg": "#D8E2F2",
+            "button_fg": "#111827",
+            "insert_bg": "#111111",
+            "select_bg": "#BBD3FF",
+        }
+
+    def apply_theme(self):
+        self.theme_tokens = self.get_theme_tokens(self.theme_name)
+        colors = self.theme_tokens
+
+        self.style.configure("TFrame", background=colors["root_bg"])
+        self.style.configure("TLabelframe", background=colors["panel_bg"], bordercolor=colors["surface_bg"])
+        self.style.configure(
+            "TLabelframe.Label",
+            background=colors["panel_bg"],
+            foreground=colors["text_fg"],
+            font=("SF Pro Text", 12, "bold"),
+        )
+        self.style.configure("TLabel", background=colors["root_bg"], foreground=colors["text_fg"], font=("SF Pro Text", 12))
+        self.style.configure("Hero.TFrame", background=colors["surface_bg"])
+        self.style.configure("HeroTitle.TLabel", background=colors["surface_bg"], foreground=colors["text_fg"], font=("SF Pro Display", 22, "bold"))
+        self.style.configure("HeroSubtitle.TLabel", background=colors["surface_bg"], foreground=colors["muted_fg"], font=("SF Pro Text", 12))
+        self.style.configure("Info.TFrame", background=colors["surface_bg"])
+        self.style.configure("Info.TLabel", background=colors["surface_bg"], foreground=colors["muted_fg"], font=("SF Pro Text", 11))
+        self.style.configure("Status.TLabel", background=colors["root_bg"], foreground=colors["muted_fg"], font=("SF Pro Text", 11))
+        self.style.configure("Meta.TLabel", background=colors["root_bg"], foreground=colors["muted_fg"], font=("SF Pro Text", 10))
+        self.style.configure("TCheckbutton", background=colors["root_bg"], foreground=colors["text_fg"])
+        self.style.map("TCheckbutton", background=[("active", colors["root_bg"])], foreground=[("active", colors["text_fg"])])
+        self.style.configure(
+            "TEntry",
+            fieldbackground=colors["entry_bg"],
+            foreground=colors["entry_fg"],
+            insertcolor=colors["insert_bg"],
+        )
+        self.style.map("TEntry", fieldbackground=[("readonly", colors["entry_bg"])], foreground=[("readonly", colors["entry_fg"])])
+        self.style.configure(
+            "TCombobox",
+            fieldbackground=colors["entry_bg"],
+            background=colors["entry_bg"],
+            foreground=colors["entry_fg"],
+            arrowcolor=colors["entry_fg"],
+        )
+        self.style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", colors["entry_bg"])],
+            foreground=[("readonly", colors["entry_fg"])],
+            selectbackground=[("readonly", colors["entry_bg"])],
+            selectforeground=[("readonly", colors["entry_fg"])],
+        )
+        self.style.configure("TButton", background=colors["button_bg"], foreground=colors["button_fg"])
+        self.style.configure("Secondary.TButton", background=colors["button_bg"], foreground=colors["button_fg"])
+        self.style.configure("Accent.TButton", background=colors["select_bg"], foreground=colors["text_fg"])
+        self.style.map(
+            "TButton",
+            background=[("active", colors["surface_bg"])],
+            foreground=[("disabled", colors["muted_fg"])],
+        )
+        self.style.map(
+            "Secondary.TButton",
+            background=[("active", colors["surface_bg"])],
+            foreground=[("disabled", colors["muted_fg"])],
+        )
+        self.style.map(
+            "Accent.TButton",
+            background=[("active", colors["button_bg"])],
+            foreground=[("disabled", colors["muted_fg"])],
+        )
+
+        self.root.configure(background=colors["root_bg"])
+        self.text_widget.configure(
+            background=colors["text_bg"],
+            foreground=colors["text_fg"],
+            insertbackground=colors["insert_bg"],
+            selectbackground=colors["select_bg"],
+            selectforeground=colors["text_fg"],
+        )
+
+    def change_theme(self, event=None):
+        self.theme_name = "dark" if self.theme_var.get() == "Тёмная" else "light"
+        self.apply_theme()
+        self.save_settings()
+
+    def set_status(self, text):
+        self.root.after(0, lambda: self.status_var.set(text))
+
+    def load_settings(self):
+        try:
+            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        self.delay_var.set(str(data.get("delay", self.delay_var.get())))
+        self.start_after_var.set(str(data.get("start_after", self.start_after_var.get())))
+        self.focus_delay_var.set(str(data.get("focus_delay", self.focus_delay_var.get())))
+        self.theme_name = data.get("theme", self.theme_name)
+        self.theme_var.set("Тёмная" if self.theme_name == "dark" else "Светлая")
+        self.compact_var.set(bool(data.get("compact", False)))
+
+    def save_settings(self):
+        data = {
+            "delay": self.delay_var.get().strip(),
+            "start_after": self.start_after_var.get().strip(),
+            "focus_delay": self.focus_delay_var.get().strip(),
+            "theme": self.theme_name,
+            "compact": self.compact_var.get(),
+        }
+        try:
+            CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def on_close(self):
+        self.save_settings()
+        if self.focus_poll_job is not None:
+            self.root.after_cancel(self.focus_poll_job)
+        self.root.destroy()
+
+    def toggle_compact_mode(self):
+        self.apply_layout_mode()
+        self.save_settings()
+
+    def apply_layout_mode(self):
+        for widget in (
+            self.hero_frame,
+            self.settings_frame,
+            self.info_frame,
+            self.text_frame,
+            self.meta_frame,
+            self.actions_frame,
+        ):
+            widget.pack_forget()
+
+        if not self.compact_var.get():
+            self.hero_frame.pack(fill="x", pady=(0, 12))
+        self.settings_frame.pack(fill="x", pady=(0, 12))
+        if not self.compact_var.get():
+            self.info_frame.pack(fill="x", pady=(0, 12))
+        self.text_frame.pack(fill="both", expand=True)
+        self.meta_frame.pack(fill="x", pady=(10, 0))
+        self.actions_frame.pack(fill="x", pady=(12, 0))
+
+    def capture_app_identity(self):
+        if self.app_process_name is None:
+            self.app_process_name = self.get_frontmost_app_name()
+
+    def get_frontmost_app_name(self):
+        script = 'tell application "System Events" to get name of first application process whose frontmost is true'
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except Exception:
+            return ""
+        return result.stdout.strip()
+
+    def is_external_focus(self):
+        current_name = self.get_frontmost_app_name()
+        if not current_name:
+            return False, "Фокус: не удалось определить"
+
+        app_name = self.app_process_name or current_name
+        if current_name == app_name:
+            return False, "Фокус: окно приложения"
+
+        return True, f"Фокус: {current_name}"
+
+    def start_focus_polling(self):
+        self.update_focus_status()
+
+    def update_focus_status(self):
+        found, label = self.is_external_focus()
+        self.focus_var.set(label if found else label)
+        self.focus_poll_job = self.root.after(900, self.update_focus_status)
+
+    def on_text_modified(self, event=None):
+        if self.text_widget.edit_modified():
+            self.update_text_stats()
+            self.text_widget.edit_modified(False)
+
+    def update_text_stats(self, *_):
+        text = self.text_widget.get("1.0", "end-1c")
+        chars = len(text)
+        delay = self.get_float_value(self.delay_var.get(), default=0.1)
+        start_after = self.get_float_value(self.start_after_var.get(), default=0.0)
+        focus_delay = self.get_float_value(self.focus_delay_var.get(), default=0.0)
+        estimated = chars * delay + start_after + focus_delay
+        self.stats_var.set(f"{chars} символов • ~{self.format_duration(estimated)}")
+
+    def format_duration(self, seconds):
+        if seconds < 60:
+            return f"{seconds:.1f} сек"
+        minutes = int(seconds // 60)
+        rest = int(seconds % 60)
+        return f"{minutes}м {rest:02d}с"
+
+    def get_float_value(self, value, default=0.0):
+        try:
+            parsed = float(str(value).strip())
+            if parsed < 0:
+                return default
+            return parsed
+        except Exception:
+            return default
+
+    def wait_for_target_focus(self):
+        self.set_status("Ожидание целевого фокуса...")
+        while not self.stop_requested:
+            found, label = self.is_external_focus()
+            self.focus_var.set(label)
+            if found:
+                return label.replace("Фокус: ", "", 1)
+            time.sleep(0.2)
+        return None
+
+    def sleep_with_stop(self, seconds, status_text=None):
+        if seconds <= 0:
+            return not self.stop_requested
+        if status_text:
+            self.set_status(status_text)
+        end_time = time.time() + seconds
+        while time.time() < end_time:
+            if self.stop_requested:
+                return False
+            time.sleep(0.05)
+        return True
+
+    def clear_text(self):
+        if self.is_typing:
+            return
+        self.text_widget.delete("1.0", "end")
+        self.update_text_stats()
+        self.set_status("Текст очищен")
+
+    def select_all_text(self):
+        self.text_widget.focus_set()
+        self.text_widget.tag_add("sel", "1.0", "end-1c")
+        self.text_widget.mark_set("insert", "1.0")
+        self.text_widget.see("insert")
+        self.set_status("Текст выделен")
+
+    def copy_selection(self):
+        try:
+            selected_text = self.text_widget.get("sel.first", "sel.last")
+        except tk.TclError:
+            self.set_status("Нет выделенного текста")
+            return
+
+        self.root.clipboard_clear()
+        self.root.clipboard_append(selected_text)
+        self.set_status("Текст скопирован")
+
+    def cut_selection(self):
+        if self.is_typing:
+            return
+
+        try:
+            selected_text = self.text_widget.get("sel.first", "sel.last")
+        except tk.TclError:
+            self.set_status("Нет выделенного текста")
+            return
+
+        self.root.clipboard_clear()
+        self.root.clipboard_append(selected_text)
+        self.text_widget.delete("sel.first", "sel.last")
+        self.set_status("Текст вырезан")
+
+    def handle_paste(self, event=None):
+        self.paste_text()
+        return "break"
+
+    def handle_select_all(self, event=None):
+        self.select_all_text()
+        return "break"
+
+    def handle_copy(self, event=None):
+        self.copy_selection()
+        return "break"
+
+    def handle_cut(self, event=None):
+        self.cut_selection()
+        return "break"
+
+    def handle_command_shortcuts(self, event):
+        focused_widget = self.root.focus_get()
+        if focused_widget is not self.text_widget:
+            return None
+
+        shortcuts = {
+            SELECT_ALL_KEYCODE: self.select_all_text,
+            COPY_KEYCODE: self.copy_selection,
+            CUT_KEYCODE: self.cut_selection,
+            PASTE_KEYCODE: self.paste_text,
+        }
+
+        action = shortcuts.get(event.keycode)
+        if action is None:
+            return None
+
+        action()
+        return "break"
+        return None
+
+    def handle_global_keypress(self, event):
+        focused_widget = self.root.focus_get()
+        if focused_widget is not self.text_widget:
+            return None
+
+        shortcuts = {
+            SELECT_ALL_KEYCODE: self.select_all_text,
+            COPY_KEYCODE: self.copy_selection,
+            CUT_KEYCODE: self.cut_selection,
+            PASTE_KEYCODE: self.paste_text,
+        }
+
+        action = shortcuts.get(event.keycode)
+        if action is None:
+            return None
+
+        if any(event.state & mask for mask in COMMAND_MASKS):
+            action()
+            return "break"
+
+        return None
+
+    def paste_text(self):
+        if self.is_typing:
+            return
+
+        try:
+            clipboard_text = self.root.clipboard_get()
+        except tk.TclError:
+            self.set_status("Буфер обмена пуст")
+            return
+
+        if not clipboard_text:
+            self.set_status("Буфер обмена пуст")
+            return
+
+        self.text_widget.insert("insert", clipboard_text)
+        self.update_text_stats()
+        self.text_widget.focus_set()
+        self.set_status("Текст вставлен из буфера")
+
+    def insert_test_text(self):
+        if self.is_typing:
+            return
+        sample = (
+            "привет это мой look сегодня\n"
+            "operator new — для динамического создания объектов\n"
+            "C++ и Python нормально mixed в одной строке\n"
+        )
+        self.text_widget.delete("1.0", "end")
+        self.text_widget.insert("1.0", sample)
+        self.update_text_stats()
+        self.set_status("Тестовый текст вставлен")
+
+    def post_keycode(self, keycode):
+        down = CGEventCreateKeyboardEvent(None, keycode, True)
+        up = CGEventCreateKeyboardEvent(None, keycode, False)
+        CGEventPost(kCGHIDEventTap, down)
+        CGEventPost(kCGHIDEventTap, up)
+
+    def post_unicode_char(self, ch):
+        down = CGEventCreateKeyboardEvent(None, 0, True)
+        CGEventKeyboardSetUnicodeString(down, len(ch), ch)
+
+        up = CGEventCreateKeyboardEvent(None, 0, False)
+        CGEventKeyboardSetUnicodeString(up, len(ch), ch)
+
+        CGEventPost(kCGHIDEventTap, down)
+        CGEventPost(kCGHIDEventTap, up)
+
+    def validate_float(self, value, name):
+        try:
+            x = float(value)
+            if x < 0:
+                raise ValueError
+            return x
+        except Exception:
+            messagebox.showerror("Ошибка", f"{name} должно быть неотрицательным числом.")
+            return None
+
+    def start_typing(self):
+        if self.is_typing:
+            return
+
+        text = self.text_widget.get("1.0", "end-1c")
+        if not text:
+            messagebox.showwarning("Пустой текст", "Сначала введи текст.")
+            return
+
+        delay = self.validate_float(self.delay_var.get().strip(), "Задержка")
+        if delay is None:
+            return
+
+        start_after = self.validate_float(self.start_after_var.get().strip(), "Время старта")
+        if start_after is None:
+            return
+
+        focus_delay = self.validate_float(self.focus_delay_var.get().strip(), "Задержка после фокуса")
+        if focus_delay is None:
+            return
+
+        self.is_typing = True
+        self.stop_requested = False
+        self.start_button.config(state="disabled")
+        self.stop_button.config(state="normal")
+        self.save_settings()
+
+        t = threading.Thread(
+            target=self.run_action,
+            args=(text, delay, start_after, focus_delay),
+            daemon=True,
+        )
+        t.start()
+
+    def stop_typing(self):
+        if self.is_typing:
+            self.stop_requested = True
+            self.set_status("Запрошена остановка...")
+
+    def type_text(self, text, delay):
+        for ch in text:
+            if self.stop_requested:
+                return False
+
+            if ch == "\n":
+                self.post_keycode(ENTER_KEYCODE)
+            elif ch == "\t":
+                self.post_keycode(TAB_KEYCODE)
+            elif ch == "\r":
+                continue
+            else:
+                self.post_unicode_char(ch)
+
+            time.sleep(delay)
+
+        return True
+
+    def run_action(self, text, delay, start_after, focus_delay):
+        try:
+            if not self.sleep_with_stop(start_after, f"Старт через {start_after:.1f} сек"):
+                self.set_status("Остановлено")
+                return
+
+            if self.stop_requested:
+                self.set_status("Остановлено")
+                return
+
+            focus_name = self.wait_for_target_focus()
+            if focus_name is None:
+                self.set_status("Остановлено")
+                return
+
+            if not self.sleep_with_stop(focus_delay, f"Фокус найден: {focus_name}. Старт через {focus_delay:.1f} сек"):
+                self.set_status("Остановлено")
+                return
+
+            self.set_status("Посимвольный ввод...")
+            ok = self.type_text(text, delay)
+
+            if ok:
+                self.set_status("Готово")
+            else:
+                self.set_status("Остановлено")
+
+        except Exception as e:
+            self.set_status(f"Ошибка: {e}")
+        finally:
+            self.is_typing = False
+            self.stop_requested = False
+            self.root.after(0, self.reset_buttons)
+
+    def reset_buttons(self):
+        self.start_button.config(state="normal")
+        self.stop_button.config(state="disabled")
+
+
+def main():
+    root = tk.Tk()
+    TextTyperGUI(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
