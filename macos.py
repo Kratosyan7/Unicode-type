@@ -18,7 +18,7 @@ ENTER_KEYCODE = 36
 TAB_KEYCODE = 48
 PASTE_KEYCODE = 9
 COMMAND_MASKS = (0x0004, 0x0008, 0x0010, 0x0080)
-SELECT_ALL_KEYCODE = 0
+SELECT_ALL_KEYCODE = 0  # macOS virtual keycode для клавиши «A»
 COPY_KEYCODE = 8
 CUT_KEYCODE = 7
 UNDO_KEYCODE = 6
@@ -36,11 +36,11 @@ class TextTyperGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Unicode Text Typer")
-        self.root.geometry("920x760")
-        self.root.minsize(860, 680)
+        self.root.geometry("760x620")
+        self.root.minsize(680, 540)
 
         self.is_typing = False
-        self.stop_requested = False
+        self.stop_event = threading.Event()
         self.focus_poll_job = None
         self.focus_probe_inflight = False
         self.app_process_name = None
@@ -617,6 +617,8 @@ class TextTyperGUI:
         gap = 8 if dense else 10
         self.main_frame.configure(padding=10 if dense else 12)
         self.topbar_frame.pack(fill="x", pady=(0, gap))
+        if not dense:
+            self.hero_frame.pack(fill="x", pady=(0, 12))
         self.settings_frame.pack(fill="x", pady=(0, gap))
         if not dense:
             self.info_frame.pack(fill="x", pady=(0, gap))
@@ -662,11 +664,11 @@ class TextTyperGUI:
         self.focus_poll_job = self.root.after(900, self.update_focus_status)
 
     def refresh_focus_status_async(self):
-        found, label = self.is_external_focus()
+        _, label = self.is_external_focus()
 
         def apply_focus_status():
             self.focus_probe_inflight = False
-            self.focus_var.set(label if found else label)
+            self.focus_var.set(label)
 
         try:
             self.root.after(0, apply_focus_status)
@@ -793,25 +795,21 @@ class TextTyperGUI:
 
     def wait_for_target_focus(self):
         self.set_status("Ожидание целевого фокуса...")
-        while not self.stop_requested:
+        while not self.stop_event.is_set():
             found, label = self.is_external_focus()
             self.root.after(0, self.focus_var.set, label)
             if found:
                 return label.replace("Фокус: ", "", 1)
-            time.sleep(0.2)
+            if self.stop_event.wait(0.2):
+                break
         return None
 
     def sleep_with_stop(self, seconds, status_text=None):
         if seconds <= 0:
-            return not self.stop_requested
+            return not self.stop_event.is_set()
         if status_text:
             self.set_status(status_text)
-        end_time = time.time() + seconds
-        while time.time() < end_time:
-            if self.stop_requested:
-                return False
-            time.sleep(0.05)
-        return True
+        return not self.stop_event.wait(seconds)
 
     def clear_text(self):
         if self.is_typing:
@@ -825,8 +823,9 @@ class TextTyperGUI:
 
     def select_all_text(self):
         self.text_widget.focus_set()
+        self.text_widget.tag_remove("sel", "1.0", "end")
         self.text_widget.tag_add("sel", "1.0", "end-1c")
-        self.text_widget.mark_set("insert", "1.0")
+        self.text_widget.mark_set("insert", "end-1c")
         self.text_widget.see("insert")
         self.set_status("Текст выделен")
 
@@ -878,7 +877,7 @@ class TextTyperGUI:
         self.cut_selection()
         return "break"
 
-    def handle_command_shortcuts(self, event):
+    def _shortcut_action_for_event(self, event):
         focused_widget = self.root.focus_get()
         if focused_widget is not self.text_widget:
             return None
@@ -889,35 +888,22 @@ class TextTyperGUI:
             CUT_KEYCODE: self.cut_selection,
             PASTE_KEYCODE: self.paste_text,
         }
+        return shortcuts.get(event.keycode)
 
-        action = shortcuts.get(event.keycode)
+    def handle_command_shortcuts(self, event):
+        action = self._shortcut_action_for_event(event)
         if action is None:
             return None
-
         action()
         return "break"
-        return None
 
     def handle_global_keypress(self, event):
-        focused_widget = self.root.focus_get()
-        if focused_widget is not self.text_widget:
-            return None
-
-        shortcuts = {
-            SELECT_ALL_KEYCODE: self.select_all_text,
-            COPY_KEYCODE: self.copy_selection,
-            CUT_KEYCODE: self.cut_selection,
-            PASTE_KEYCODE: self.paste_text,
-        }
-
-        action = shortcuts.get(event.keycode)
+        action = self._shortcut_action_for_event(event)
         if action is None:
             return None
-
         if any(event.state & mask for mask in COMMAND_MASKS):
             action()
             return "break"
-
         return None
 
     def handle_text_keypress(self, event):
@@ -998,6 +984,10 @@ class TextTyperGUI:
             return
 
         self.push_undo_separator()
+        try:
+            self.text_widget.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
         self.text_widget.insert("insert", clipboard_text)
         self.push_undo_separator()
         self.update_text_stats()
@@ -1073,7 +1063,7 @@ class TextTyperGUI:
             return
 
         self.is_typing = True
-        self.stop_requested = False
+        self.stop_event.clear()
         self.start_button.config(state="disabled")
         self.stop_button.config(state="normal")
         self.save_settings()
@@ -1087,12 +1077,12 @@ class TextTyperGUI:
 
     def stop_typing(self):
         if self.is_typing:
-            self.stop_requested = True
+            self.stop_event.set()
             self.set_status("Запрошена остановка...")
 
     def type_text(self, text, delay):
         for ch in text:
-            if self.stop_requested:
+            if self.stop_event.is_set():
                 return False
 
             if ch == "\n":
@@ -1104,7 +1094,8 @@ class TextTyperGUI:
             else:
                 self.post_unicode_char(ch)
 
-            time.sleep(delay)
+            if self.stop_event.wait(delay):
+                return False
 
         return True
 
@@ -1114,7 +1105,7 @@ class TextTyperGUI:
                 self.set_status("Остановлено")
                 return
 
-            if self.stop_requested:
+            if self.stop_event.is_set():
                 self.set_status("Остановлено")
                 return
 
@@ -1139,7 +1130,7 @@ class TextTyperGUI:
             self.set_status(f"Ошибка: {e}")
         finally:
             self.is_typing = False
-            self.stop_requested = False
+            self.stop_event.clear()
             self.root.after(0, self.reset_buttons)
 
     def reset_buttons(self):

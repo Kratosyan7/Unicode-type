@@ -189,12 +189,12 @@ class TextTyperGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Windows Text Typer")
-        self.root.geometry("920x760")
-        self.root.minsize(860, 680)
+        self.root.geometry("760x620")
+        self.root.minsize(680, 540)
 
         self.typer = WindowsTyper()
         self.is_typing = False
-        self.stop_requested = False
+        self.stop_event = threading.Event()
         self.focus_poll_job = None
         self.undo_group_job = None
         self.last_edit_time = 0.0
@@ -354,6 +354,7 @@ class TextTyperGUI:
         self.text_widget.bind("<Control-X>", self.handle_cut)
         self.text_widget.bind("<Control-Cyrillic_che>", self.handle_cut)
         self.text_widget.bind("<Control-Cyrillic_CHE>", self.handle_cut)
+        self.text_widget.bind("<Control-KeyPress>", self.handle_control_keypress, add="+")
         self.text_widget.bind("<<Paste>>", self.handle_paste)
         self.text_widget.bind("<<Modified>>", self.on_text_modified)
         self.default_insert_width = int(float(self.text_widget.cget("insertwidth")))
@@ -766,6 +767,8 @@ class TextTyperGUI:
         gap = 8 if dense else 10
         self.main_frame.configure(padding=10 if dense else 12)
         self.topbar_frame.pack(fill="x", pady=(0, gap))
+        if not dense:
+            self.hero_frame.pack(fill="x", pady=(0, 12))
         self.settings_frame.pack(fill="x", pady=(0, gap))
         if not dense:
             self.info_frame.pack(fill="x", pady=(0, gap))
@@ -914,8 +917,9 @@ class TextTyperGUI:
 
     def select_all_text(self):
         self.text_widget.focus_set()
+        self.text_widget.tag_remove("sel", "1.0", "end")
         self.text_widget.tag_add("sel", "1.0", "end-1c")
-        self.text_widget.mark_set("insert", "1.0")
+        self.text_widget.mark_set("insert", "end-1c")
         self.text_widget.see("insert")
         self.set_status("Текст выделен")
 
@@ -966,6 +970,20 @@ class TextTyperGUI:
     def handle_cut(self, event=None):
         self.cut_selection()
         return "break"
+
+    def handle_control_keypress(self, event):
+        # Virtual-Key codes — не зависят от раскладки клавиатуры (RU/EN).
+        vk_actions = {
+            0x41: self.handle_select_all,  # A
+            0x43: self.handle_copy,        # C
+            0x56: self.handle_paste,       # V
+            0x58: self.handle_cut,         # X
+            0x5A: self.handle_undo,        # Z
+        }
+        action = vk_actions.get(event.keycode)
+        if action is None:
+            return None
+        return action(event)
 
     def handle_text_keypress(self, event):
         if self.is_typing:
@@ -1045,6 +1063,10 @@ class TextTyperGUI:
             return
 
         self.push_undo_separator()
+        try:
+            self.text_widget.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
         self.text_widget.insert("insert", clipboard_text)
         self.push_undo_separator()
         self.update_text_stats()
@@ -1104,7 +1126,7 @@ class TextTyperGUI:
             return
 
         self.is_typing = True
-        self.stop_requested = False
+        self.stop_event.clear()
         self.start_button.config(state="disabled")
         self.stop_button.config(state="normal")
         self.save_settings()
@@ -1118,29 +1140,25 @@ class TextTyperGUI:
 
     def stop_typing(self):
         if self.is_typing:
-            self.stop_requested = True
+            self.stop_event.set()
             self.set_status("Запрошена остановка...")
 
     def wait_for_target_focus(self, app_window_title):
         self.set_status("Ожидание целевого фокуса...")
-        while not self.stop_requested:
+        while not self.stop_event.is_set():
             active_title = self.typer.get_foreground_window_title()
             if active_title and active_title != app_window_title:
                 return active_title
-            time.sleep(0.2)
+            if self.stop_event.wait(0.2):
+                break
         return None
 
     def sleep_with_stop(self, seconds, status_text=None):
         if seconds <= 0:
-            return not self.stop_requested
+            return not self.stop_event.is_set()
         if status_text:
             self.set_status(status_text)
-        end_time = time.time() + seconds
-        while time.time() < end_time:
-            if self.stop_requested:
-                return False
-            time.sleep(0.05)
-        return True
+        return not self.stop_event.wait(seconds)
 
     def run_action(self, text, delay, start_after, focus_delay):
         app_window_title = self.root.title()
@@ -1149,7 +1167,7 @@ class TextTyperGUI:
                 self.set_status("Остановлено")
                 return
 
-            if self.stop_requested:
+            if self.stop_event.is_set():
                 self.set_status("Остановлено")
                 return
 
@@ -1170,7 +1188,7 @@ class TextTyperGUI:
             completed = self.typer.type_text(
                 text,
                 delay,
-                stop_requested=lambda: self.stop_requested,
+                stop_requested=self.stop_event.is_set,
                 on_progress=self.update_progress,
             )
 
@@ -1193,7 +1211,7 @@ class TextTyperGUI:
             self.show_runtime_error("Неожиданная ошибка", str(error))
         finally:
             self.is_typing = False
-            self.stop_requested = False
+            self.stop_event.clear()
             self.root.after(0, self.reset_buttons)
 
     def update_progress(self, current, total):
@@ -1209,6 +1227,9 @@ class TextTyperGUI:
 
 
 def main():
+    if platform.system() != "Windows":
+        print("Этот файл предназначен для запуска только в Windows. Используй macos.py на macOS.")
+        return
     root = tk.Tk()
     TextTyperGUI(root)
     root.mainloop()
