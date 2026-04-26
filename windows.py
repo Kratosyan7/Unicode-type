@@ -212,6 +212,7 @@ class TextTyperGUI:
         self.theme_name = "light"
         self.design_name = "native"
         self.theme_tokens = {}
+        self.current_settings_title = "Параметры"
 
         self.load_settings()
         self.build_ui()
@@ -321,7 +322,7 @@ class TextTyperGUI:
         self.text_widget = tk.Text(
             text_frame,
             wrap="word",
-            height=4,
+            height=2,
             relief="flat",
             borderwidth=0,
             padx=8,
@@ -653,16 +654,18 @@ class TextTyperGUI:
             },
         }
         copy = copies[self.design_name]
+        self.current_settings_title = copy["settings_title"]
         self.platform_label.configure(text=copy["platform"])
         self.hero_badge_label.configure(text=copy["badge"])
         self.title_label.configure(text=copy["title"])
         self.subtitle_label.configure(text=copy["subtitle"])
         self.hero_flow_label.configure(text=copy["flow"])
-        self.settings_frame.configure(text=copy["settings_title"])
         self.settings_hint_label.configure(text=copy["settings_hint"])
         self.info_label.configure(text=copy["info"])
         self.text_frame.configure(text=copy["text_title"])
         self.start_button.configure(text=copy["start_text"])
+        if not self.compact_var.get():
+            self.settings_frame.configure(text=self.current_settings_title)
 
     def change_design(self, event=None):
         self.design_name = DESIGN_LABEL_TO_NAME.get(self.design_var.get(), "native")
@@ -679,6 +682,13 @@ class TextTyperGUI:
         self.apply_theme()
         self.save_settings()
 
+    def _apply_saved_geometry(self, geometry):
+        if isinstance(geometry, str) and geometry.strip():
+            try:
+                self.root.geometry(geometry)
+            except tk.TclError:
+                pass
+
     def load_settings(self):
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
@@ -693,8 +703,13 @@ class TextTyperGUI:
         self.design_name = data.get("design", self.design_name)
         self.design_var.set(DESIGN_NAME_TO_LABEL.get(self.design_name, "Native"))
         self.compact_var.set(bool(data.get("compact", False)))
+        self._apply_saved_geometry(data.get("window_geometry"))
 
     def save_settings(self):
+        try:
+            geometry = self.root.geometry()
+        except tk.TclError:
+            geometry = ""
         data = {
             "delay": self.delay_var.get().strip(),
             "start_after": self.start_after_var.get().strip(),
@@ -702,6 +717,7 @@ class TextTyperGUI:
             "theme": self.theme_name,
             "design": self.design_name,
             "compact": self.compact_var.get(),
+            "window_geometry": geometry,
         }
         try:
             CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -751,15 +767,25 @@ class TextTyperGUI:
         dense = self.compact_var.get()
         gap = 4 if dense else 8
         self.main_frame.configure(padding=6 if dense else 8)
-        self.topbar_frame.pack(fill="x", pady=(0, gap))
+
+        if dense:
+            self.settings_hint_label.grid_remove()
+            self.settings_frame.configure(text="", labelanchor="nw")
+        else:
+            self.settings_hint_label.grid()
+            self.settings_frame.configure(text=self.current_settings_title)
+
+        self.topbar_frame.pack(side="top", fill="x", pady=(0, gap))
         if not dense:
-            self.hero_frame.pack(fill="x", pady=(0, 8))
-        self.settings_frame.pack(fill="x", pady=(0, gap))
+            self.hero_frame.pack(side="top", fill="x", pady=(0, 8))
+        self.settings_frame.pack(side="top", fill="x", pady=(0, gap))
         if not dense:
-            self.info_frame.pack(fill="x", pady=(0, gap))
-        self.text_frame.pack(fill="both", expand=True)
-        self.meta_frame.pack(fill="x", pady=(gap, 0))
-        self.actions_frame.pack(fill="x", pady=(gap, 0))
+            self.info_frame.pack(side="top", fill="x", pady=(0, gap))
+
+        self.actions_frame.pack(side="bottom", fill="x", pady=(gap, 0))
+        self.meta_frame.pack(side="bottom", fill="x", pady=(gap, 0))
+
+        self.text_frame.pack(side="top", fill="both", expand=True)
 
     def start_focus_polling(self):
         self.update_focus_status()
