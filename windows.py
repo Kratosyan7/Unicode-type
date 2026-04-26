@@ -1,7 +1,6 @@
 import array
 import ctypes
 import json
-import math
 import platform
 import threading
 import time
@@ -189,8 +188,8 @@ class TextTyperGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Windows Text Typer")
-        self.root.geometry("760x620")
-        self.root.minsize(680, 540)
+        self.root.geometry("640x460")
+        self.root.minsize(360, 220)
 
         self.typer = WindowsTyper()
         self.is_typing = False
@@ -198,10 +197,8 @@ class TextTyperGUI:
         self.focus_poll_job = None
         self.undo_group_job = None
         self.last_edit_time = 0.0
-        self.donut_job = None
-        self.donut_running = False
-        self.donut_a = 0.0
-        self.donut_b = 0.0
+        self.design_theme_collapsed = False
+        self.design_theme_collapse_width = 720
 
         self.delay_var = tk.StringVar(value="0.1")
         self.start_after_var = tk.StringVar(value="3")
@@ -221,18 +218,19 @@ class TextTyperGUI:
         for var in (self.delay_var, self.start_after_var, self.focus_delay_var):
             var.trace_add("write", self.update_text_stats)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.bind("<Configure>", self._on_root_resize, add="+")
         self.start_focus_polling()
 
     def build_ui(self):
-        main = ttk.Frame(self.root, padding=12)
+        main = ttk.Frame(self.root, padding=8)
         main.pack(fill="both", expand=True)
         self.main_frame = main
 
         self.configure_styles()
         self.configure_menu()
 
-        self.topbar_frame = ttk.Frame(main, padding=(4, 2, 4, 8), style="Topbar.TFrame")
-        self.topbar_frame.pack(fill="x", pady=(0, 10))
+        self.topbar_frame = ttk.Frame(main, padding=(2, 0, 2, 4), style="Topbar.TFrame")
+        self.topbar_frame.pack(fill="x", pady=(0, 6))
 
         topbar_brand = ttk.Frame(self.topbar_frame, style="Topbar.TFrame")
         topbar_brand.pack(side="left", fill="x", expand=True)
@@ -243,38 +241,16 @@ class TextTyperGUI:
 
         topbar_controls = ttk.Frame(self.topbar_frame, style="Topbar.TFrame")
         topbar_controls.pack(side="right")
-        ttk.Label(topbar_controls, text="Дизайн", style="ControlLabel.TLabel").grid(row=0, column=0, sticky="w")
-        self.design_combo = ttk.Combobox(
-            topbar_controls,
-            textvariable=self.design_var,
-            values=tuple(DESIGN_LABEL_TO_NAME.keys()),
-            state="readonly",
-            width=10,
-        )
-        self.design_combo.grid(row=1, column=0, padx=(0, 12), sticky="w")
-        self.design_combo.bind("<<ComboboxSelected>>", self.change_design)
-
-        ttk.Label(topbar_controls, text="Тема", style="ControlLabel.TLabel").grid(row=0, column=1, sticky="w")
-        self.theme_combo = ttk.Combobox(
-            topbar_controls,
-            textvariable=self.theme_var,
-            values=("Светлая", "Тёмная"),
-            state="readonly",
-            width=12,
-        )
-        self.theme_combo.grid(row=1, column=1, padx=(0, 12), sticky="w")
-        self.theme_combo.bind("<<ComboboxSelected>>", self.change_theme)
-
         self.compact_check = ttk.Checkbutton(
             topbar_controls,
             text="Компактный режим",
             variable=self.compact_var,
             command=self.toggle_compact_mode,
         )
-        self.compact_check.grid(row=1, column=2, sticky="w")
+        self.compact_check.grid(row=0, column=0, sticky="e")
 
-        hero = ttk.Frame(main, padding=(22, 20, 22, 18), style="Hero.TFrame")
-        hero.pack(fill="x", pady=(0, 12))
+        hero = ttk.Frame(main, padding=(14, 10, 14, 10), style="Hero.TFrame")
+        hero.pack(fill="x", pady=(0, 8))
         self.hero_frame = hero
 
         self.hero_badge_label = ttk.Label(hero, text="NATIVE", style="HeroEyebrow.TLabel")
@@ -286,8 +262,8 @@ class TextTyperGUI:
         self.hero_flow_label = ttk.Label(hero, style="HeroFlow.TLabel")
         self.hero_flow_label.pack(anchor="w", pady=(12, 0))
 
-        settings = ttk.LabelFrame(main, text="Параметры", padding=12)
-        settings.pack(fill="x", pady=(0, 12))
+        settings = ttk.LabelFrame(main, text="Параметры", padding=8)
+        settings.pack(fill="x", pady=(0, 8))
         self.settings_frame = settings
 
         ttk.Label(settings, text="Задержка, сек", style="FieldLabel.TLabel").grid(row=0, column=0, sticky="w")
@@ -301,11 +277,36 @@ class TextTyperGUI:
         ttk.Label(settings, text="После фокуса, сек", style="FieldLabel.TLabel").grid(row=0, column=2, sticky="w")
         self.focus_delay_entry = ttk.Entry(settings, textvariable=self.focus_delay_var, width=10)
         self.focus_delay_entry.grid(row=1, column=2, padx=(0, 16), sticky="w")
-        self.settings_hint_label = ttk.Label(settings, style="PanelHint.TLabel")
-        self.settings_hint_label.grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
-        info = ttk.Frame(main, style="Info.TFrame", padding=(14, 10))
-        info.pack(fill="x", pady=(0, 12))
+        self.design_label = ttk.Label(settings, text="Дизайн", style="FieldLabel.TLabel")
+        self.design_label.grid(row=0, column=3, sticky="w")
+        self.design_combo = ttk.Combobox(
+            settings,
+            textvariable=self.design_var,
+            values=tuple(DESIGN_LABEL_TO_NAME.keys()),
+            state="readonly",
+            width=10,
+        )
+        self.design_combo.grid(row=1, column=3, padx=(0, 16), sticky="w")
+        self.design_combo.bind("<<ComboboxSelected>>", self.change_design)
+
+        self.theme_label = ttk.Label(settings, text="Тема", style="FieldLabel.TLabel")
+        self.theme_label.grid(row=0, column=4, sticky="w")
+        self.theme_combo = ttk.Combobox(
+            settings,
+            textvariable=self.theme_var,
+            values=("Светлая", "Тёмная"),
+            state="readonly",
+            width=12,
+        )
+        self.theme_combo.grid(row=1, column=4, padx=(0, 16), sticky="w")
+        self.theme_combo.bind("<<ComboboxSelected>>", self.change_theme)
+
+        self.settings_hint_label = ttk.Label(settings, style="PanelHint.TLabel")
+        self.settings_hint_label.grid(row=2, column=0, columnspan=5, sticky="w", pady=(10, 0))
+
+        info = ttk.Frame(main, style="Info.TFrame", padding=(10, 6))
+        info.pack(fill="x", pady=(0, 8))
         self.info_frame = info
         self.info_label = ttk.Label(
             info,
@@ -313,19 +314,19 @@ class TextTyperGUI:
         )
         self.info_label.pack(anchor="w")
 
-        text_frame = ttk.LabelFrame(main, text="Текст", padding=8)
+        text_frame = ttk.LabelFrame(main, text="Текст", padding=6)
         text_frame.pack(fill="both", expand=True)
         self.text_frame = text_frame
 
         self.text_widget = tk.Text(
             text_frame,
             wrap="word",
-            height=11,
+            height=4,
             relief="flat",
             borderwidth=0,
-            padx=10,
-            pady=10,
-            font=("Segoe UI", 12),
+            padx=8,
+            pady=6,
+            font=("Segoe UI", 11),
             background="#FBFCFE",
             undo=True,
             autoseparators=False,
@@ -357,19 +358,6 @@ class TextTyperGUI:
         self.text_widget.bind("<Control-KeyPress>", self.handle_control_keypress, add="+")
         self.text_widget.bind("<<Paste>>", self.handle_paste)
         self.text_widget.bind("<<Modified>>", self.on_text_modified)
-        self.default_insert_width = int(float(self.text_widget.cget("insertwidth")))
-        self.donut_overlay = tk.Label(
-            self.text_widget,
-            text="",
-            justify="center",
-            anchor="center",
-            borderwidth=0,
-            padx=16,
-            pady=16,
-            font=("Consolas", 10),
-            cursor="xterm",
-        )
-        self.donut_overlay.bind("<Button-1>", self.handle_donut_overlay_click)
 
         scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=self.text_widget.yview)
         scrollbar.pack(side="right", fill="y")
@@ -384,40 +372,29 @@ class TextTyperGUI:
         self.focus_label.pack(side="right")
 
         actions = ttk.Frame(main)
-        actions.pack(fill="x", pady=(12, 0))
+        actions.pack(fill="x", pady=(8, 0))
         self.actions_frame = actions
 
         self.paste_button = ttk.Button(actions, text="Вставить", command=self.paste_text, style="Secondary.TButton")
         self.paste_button.pack(side="left")
-        self.paste_button.configure(width=12)
+        self.paste_button.configure(width=8)
         self.clear_button = ttk.Button(actions, text="Очистить", command=self.clear_text, style="Secondary.TButton")
-        self.clear_button.pack(side="left", padx=(8, 0))
-        self.clear_button.configure(width=12)
-        self.sample_button = ttk.Button(
-            actions,
-            text="Тестовый текст",
-            command=self.insert_test_text,
-            style="Secondary.TButton",
-        )
-        self.sample_button.pack(side="left", padx=(8, 0))
-        self.sample_button.configure(width=14)
-        self.donut_button = ttk.Button(actions, text="Пончик", command=self.toggle_donut_animation, style="Secondary.TButton")
-        self.donut_button.pack(side="left", padx=(8, 0))
-        self.donut_button.configure(width=12)
+        self.clear_button.pack(side="left", padx=(6, 0))
+        self.clear_button.configure(width=8)
         self.start_button = ttk.Button(actions, text="Старт", command=self.start_typing, style="Accent.TButton")
-        self.start_button.pack(side="left", padx=(12, 0))
-        self.start_button.configure(width=14)
+        self.start_button.pack(side="left", padx=(8, 0))
+        self.start_button.configure(width=8)
         self.stop_button = ttk.Button(actions, text="Стоп", command=self.stop_typing, state="disabled", style="Secondary.TButton")
-        self.stop_button.pack(side="left", padx=(8, 0))
-        self.stop_button.configure(width=12)
+        self.stop_button.pack(side="left", padx=(6, 0))
+        self.stop_button.configure(width=8)
         self.status_label = ttk.Label(actions, textvariable=self.status_var, style="Status.TLabel")
         self.status_label.pack(side="right")
-        self.status_label.configure(width=28, anchor="e")
+        self.status_label.configure(width=14, anchor="e")
 
-        self.stats_label.configure(width=22, anchor="w")
-        self.focus_label.configure(width=28, anchor="e")
-        self.info_label.configure(wraplength=920, justify="left")
-        self.settings_hint_label.configure(wraplength=920, justify="left")
+        self.stats_label.configure(width=12, anchor="w")
+        self.focus_label.configure(width=16, anchor="e")
+        self.info_label.configure(wraplength=320, justify="left")
+        self.settings_hint_label.configure(wraplength=320, justify="left")
 
         self.apply_design_copy()
         self.apply_theme()
@@ -432,10 +409,10 @@ class TextTyperGUI:
         except Exception:
             return
 
-        style.configure("TEntry", padding=6)
-        style.configure("TButton", padding=(12, 8), font=("Segoe UI", 11))
-        style.configure("TCombobox", padding=6)
-        style.configure("TCheckbutton", font=("Segoe UI", 10))
+        style.configure("TEntry", padding=4)
+        style.configure("TButton", padding=(8, 4), font=("Segoe UI", 10))
+        style.configure("TCombobox", padding=4)
+        style.configure("TCheckbutton", font=("Segoe UI", 9))
         self.style = style
 
     def configure_menu(self):
@@ -553,12 +530,12 @@ class TextTyperGUI:
     def apply_theme(self):
         self.theme_tokens = self.get_theme_tokens(self.theme_name)
         colors = self.theme_tokens
-        label_font = ("Segoe UI", 11)
-        hero_title_font = ("Segoe UI Semibold", 20)
-        hero_subtitle_font = ("Segoe UI", 11)
-        topbar_title_font = ("Segoe UI Semibold", 15)
-        section_title_font = ("Segoe UI Semibold", 11)
-        button_font = ("Segoe UI", 11)
+        label_font = ("Segoe UI", 10)
+        hero_title_font = ("Segoe UI Semibold", 14)
+        hero_subtitle_font = ("Segoe UI", 10)
+        topbar_title_font = ("Segoe UI Semibold", 12)
+        section_title_font = ("Segoe UI Semibold", 10)
+        button_font = ("Segoe UI", 10)
 
         self.style.configure("TFrame", background=colors["root_bg"])
         self.style.configure("TLabelframe", background=colors["panel_bg"], bordercolor=colors["surface_bg"])
@@ -608,7 +585,7 @@ class TextTyperGUI:
             selectforeground=[("readonly", colors["entry_fg"])],
         )
         self.style.configure("TButton", background=colors["button_bg"], foreground=colors["button_fg"], font=button_font)
-        self.style.configure("Secondary.TButton", background=colors["button_bg"], foreground=colors["button_fg"], font=("Segoe UI", 11))
+        self.style.configure("Secondary.TButton", background=colors["button_bg"], foreground=colors["button_fg"], font=("Segoe UI", 10))
         self.style.configure("Accent.TButton", background=colors["select_bg"], foreground=colors["accent_fg"], font=button_font)
         self.style.map(
             "TButton",
@@ -633,12 +610,7 @@ class TextTyperGUI:
             insertbackground=colors["insert_bg"],
             selectbackground=colors["select_bg"],
             selectforeground=colors["text_fg"],
-            font=("Segoe UI", 12),
-        )
-        self.donut_overlay.configure(
-            background=colors["text_bg"],
-            foreground=colors["text_fg"],
-            font=("Consolas", 10),
+            font=("Segoe UI", 11),
         )
 
     def apply_design_copy(self):
@@ -653,7 +625,6 @@ class TextTyperGUI:
                 "settings_hint": "Чистый utilitarian-режим для тех, кто хочет сразу перейти к тексту.",
                 "info": "Utility-пресет убирает лишнюю сценографию и оставляет только управляющие элементы перед печатью.",
                 "text_title": "Текст для набора",
-                "sample_text": "Тестовый текст",
                 "start_text": "Старт",
             },
             "studio": {
@@ -666,7 +637,6 @@ class TextTyperGUI:
                 "settings_hint": "Настрой паузу до старта, момент захвата фокуса и ритм посимвольного ввода.",
                 "info": "Studio-представление помогает визуально читать процесс как последовательность шагов, а не как набор отдельных панелей.",
                 "text_title": "Черновик сцены",
-                "sample_text": "Тестовый текст",
                 "start_text": "Старт",
             },
             "native": {
@@ -679,7 +649,6 @@ class TextTyperGUI:
                 "settings_hint": "Сбалансированная системная раскладка с умеренной плотностью интерфейса.",
                 "info": "Ctrl+V и кнопка «Вставить» работают в поле редактора. После нажатия «Старт» переведи фокус в целевое окно до конца таймера.",
                 "text_title": "Текст",
-                "sample_text": "Тестовый текст",
                 "start_text": "Старт",
             },
         }
@@ -693,7 +662,6 @@ class TextTyperGUI:
         self.settings_hint_label.configure(text=copy["settings_hint"])
         self.info_label.configure(text=copy["info"])
         self.text_frame.configure(text=copy["text_title"])
-        self.sample_button.configure(text=copy["sample_text"])
         self.start_button.configure(text=copy["start_text"])
 
     def change_design(self, event=None):
@@ -741,7 +709,6 @@ class TextTyperGUI:
             pass
 
     def on_close(self):
-        self.stop_donut_animation(announce=False)
         self.save_settings()
         if self.focus_poll_job is not None:
             self.root.after_cancel(self.focus_poll_job)
@@ -750,6 +717,24 @@ class TextTyperGUI:
     def toggle_compact_mode(self):
         self.apply_layout_mode()
         self.save_settings()
+
+    def _on_root_resize(self, event):
+        if event.widget is not self.root:
+            return
+        should_collapse = event.width < self.design_theme_collapse_width
+        if should_collapse == self.design_theme_collapsed:
+            return
+        self.design_theme_collapsed = should_collapse
+        if should_collapse:
+            self.design_label.grid_remove()
+            self.design_combo.grid_remove()
+            self.theme_label.grid_remove()
+            self.theme_combo.grid_remove()
+        else:
+            self.design_label.grid()
+            self.design_combo.grid()
+            self.theme_label.grid()
+            self.theme_combo.grid()
 
     def apply_layout_mode(self):
         for widget in (
@@ -764,11 +749,11 @@ class TextTyperGUI:
             widget.pack_forget()
 
         dense = self.compact_var.get()
-        gap = 8 if dense else 10
-        self.main_frame.configure(padding=10 if dense else 12)
+        gap = 4 if dense else 8
+        self.main_frame.configure(padding=6 if dense else 8)
         self.topbar_frame.pack(fill="x", pady=(0, gap))
         if not dense:
-            self.hero_frame.pack(fill="x", pady=(0, 12))
+            self.hero_frame.pack(fill="x", pady=(0, 8))
         self.settings_frame.pack(fill="x", pady=(0, gap))
         if not dense:
             self.info_frame.pack(fill="x", pady=(0, gap))
@@ -801,94 +786,6 @@ class TextTyperGUI:
         estimated = chars * delay + start_after + focus_delay
         self.stats_var.set(f"{chars} символов • ~{self.format_duration(estimated)}")
 
-    def handle_donut_overlay_click(self, event=None):
-        self.stop_donut_animation(announce=False)
-        self.text_widget.focus_set()
-        return "break"
-
-    def toggle_donut_animation(self):
-        if self.donut_running:
-            self.stop_donut_animation()
-        else:
-            self.start_donut_animation()
-
-    def start_donut_animation(self):
-        if self.is_typing or self.donut_running:
-            return
-
-        self.donut_running = True
-        self.donut_a = 0.0
-        self.donut_b = 0.0
-        self.text_widget.configure(insertwidth=0)
-        self.donut_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self.donut_button.configure(text="Стоп пончик")
-        self.render_donut_frame()
-        self.set_status("Пончик запущен")
-
-    def stop_donut_animation(self, announce=True):
-        if self.donut_job is not None:
-            self.root.after_cancel(self.donut_job)
-            self.donut_job = None
-
-        was_running = self.donut_running or self.donut_overlay.winfo_manager()
-        self.donut_running = False
-        self.donut_button.configure(text="Пончик")
-        self.text_widget.configure(insertwidth=self.default_insert_width)
-        self.donut_overlay.place_forget()
-        self.donut_overlay.configure(text="")
-        if announce and was_running:
-            self.set_status("Пончик остановлен")
-
-    def render_donut_frame(self):
-        if not self.donut_running:
-            self.donut_job = None
-            return
-
-        self.donut_overlay.configure(text=self.build_donut_frame())
-        self.donut_a += 0.07
-        self.donut_b += 0.03
-        self.donut_job = self.root.after(50, self.render_donut_frame)
-
-    def build_donut_frame(self):
-        width = 38
-        height = 18
-        shades = ".,-~:;=!*#$@"
-        output = [" "] * (width * height)
-        zbuffer = [0.0] * (width * height)
-        sin_a = math.sin(self.donut_a)
-        cos_a = math.cos(self.donut_a)
-        sin_b = math.sin(self.donut_b)
-        cos_b = math.cos(self.donut_b)
-        x_scale = width * 0.34
-        y_scale = height * 0.58
-
-        j = 0.0
-        while j < 6.28:
-            sin_j = math.sin(j)
-            cos_j = math.cos(j)
-            i = 0.0
-            while i < 6.28:
-                sin_i = math.sin(i)
-                cos_i = math.cos(i)
-                circle = cos_j + 2.0
-                depth = 1.0 / (sin_i * circle * sin_a + sin_j * cos_a + 5.0)
-                blend = sin_i * circle * cos_a - sin_j * sin_a
-                x = int(width / 2 + x_scale * depth * (cos_i * circle * cos_b - blend * sin_b))
-                y = int(height / 2 + y_scale * depth * (cos_i * circle * sin_b + blend * cos_b))
-                luminance = int(
-                    8 * ((sin_j * sin_a - sin_i * cos_j * cos_a) * cos_b - sin_i * cos_j * sin_a - sin_j * cos_a - cos_i * cos_j * sin_b)
-                )
-
-                if 0 <= x < width and 0 <= y < height:
-                    offset = x + width * y
-                    if depth > zbuffer[offset]:
-                        zbuffer[offset] = depth
-                        output[offset] = shades[luminance if luminance > 0 else 0]
-                i += 0.05
-            j += 0.14
-
-        return "\n".join("".join(output[index:index + width]) for index in range(0, width * height, width))
-
     def format_duration(self, seconds):
         if seconds < 60:
             return f"{seconds:.1f} сек"
@@ -908,7 +805,6 @@ class TextTyperGUI:
     def clear_text(self):
         if self.is_typing:
             return
-        self.stop_donut_animation(announce=False)
         self.push_undo_separator()
         self.text_widget.delete("1.0", "end")
         self.push_undo_separator()
@@ -995,8 +891,6 @@ class TextTyperGUI:
         if not self.is_text_edit_event(event):
             return None
 
-        self.stop_donut_animation(announce=False)
-
         now = time.monotonic()
         if now - self.last_edit_time >= UNDO_GROUP_DELAY_MS / 1000:
             self.push_undo_separator()
@@ -1034,7 +928,6 @@ class TextTyperGUI:
         if self.is_typing:
             return
 
-        self.stop_donut_animation(announce=False)
         self.cancel_undo_group_timer()
 
         try:
@@ -1051,7 +944,6 @@ class TextTyperGUI:
         if self.is_typing:
             return
 
-        self.stop_donut_animation(announce=False)
         try:
             clipboard_text = self.root.clipboard_get()
         except tk.TclError:
@@ -1073,22 +965,6 @@ class TextTyperGUI:
         self.text_widget.focus_set()
         self.set_status("Текст вставлен из буфера")
 
-    def insert_test_text(self):
-        if self.is_typing:
-            return
-        self.stop_donut_animation(announce=False)
-        sample = (
-            "Привет, это безопасный тестовый ввод.\n"
-            "Он печатает символы по одному в обычное поле Windows.\n"
-            "Проверь работу в Блокноте, затем в своем приложении.\n"
-        )
-        self.push_undo_separator()
-        self.text_widget.delete("1.0", "end")
-        self.text_widget.insert("1.0", sample)
-        self.push_undo_separator()
-        self.update_text_stats()
-        self.set_status("Тестовый текст вставлен")
-
     def push_undo_separator(self):
         self.cancel_undo_group_timer()
         self.commit_undo_group()
@@ -1107,7 +983,6 @@ class TextTyperGUI:
         if self.is_typing:
             return
 
-        self.stop_donut_animation(announce=False)
         text = self.text_widget.get("1.0", "end-1c")
         if not text:
             messagebox.showwarning("Пустой текст", "Сначала введи текст.")
