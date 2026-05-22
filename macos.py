@@ -8,10 +8,28 @@ from tkinter import ttk, messagebox
 
 from Quartz import (
     CGEventCreateKeyboardEvent,
+    CGEventGetFlags,
+    CGEventGetIntegerValueField,
     CGEventKeyboardSetUnicodeString,
+    CGEventMaskBit,
     CGEventPost,
+    CGEventTapCreate,
+    CFMachPortCreateRunLoopSource,
+    CFRunLoopAddSource,
+    CFRunLoopGetCurrent,
+    CFRunLoopRun,
+    kCFRunLoopCommonModes,
+    kCGEventFlagMaskCommand,
+    kCGEventKeyDown,
+    kCGEventTapOptionListenOnly,
     kCGHIDEventTap,
+    kCGHeadInsertEventTap,
+    kCGKeyboardEventKeycode,
+    kCGSessionEventTap,
 )
+
+GLOBAL_HOTKEY_KEYCODE_B = 11  # virtual keycode for "B" on macOS
+GLOBAL_HOTKEY_KEYCODE_N = 45  # virtual keycode for "N" on macOS
 
 ENTER_KEYCODE = 36
 TAB_KEYCODE = 48
@@ -205,6 +223,7 @@ class TextTyperGUI:
         self.text_widget.bind("<Command-Cyrillic_CHE>", self.handle_cut)
         self.text_widget.bind("<<Paste>>", self.handle_paste)
         self.root.bind_all("<Command-KeyPress>", self.handle_command_shortcuts, add="+")
+        self._start_global_hotkey_listener()
         self.root.bind_all("<KeyPress>", self.handle_global_keypress, add="+")
         self.text_widget.bind("<<Modified>>", self.on_text_modified)
 
@@ -783,6 +802,49 @@ class TextTyperGUI:
         self.paste_text()
         return "break"
 
+    def handle_start_hotkey(self, event=None):
+        self.start_typing()
+        return "break"
+
+    def _start_global_hotkey_listener(self):
+        def tap_callback(proxy, type_, event, refcon):
+            try:
+                if type_ == kCGEventKeyDown:
+                    keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+                    flags = CGEventGetFlags(event)
+                    if flags & kCGEventFlagMaskCommand:
+                        if keycode == GLOBAL_HOTKEY_KEYCODE_B:
+                            self.root.after(0, self.start_typing)
+                        elif keycode == GLOBAL_HOTKEY_KEYCODE_N:
+                            self.root.after(0, self.paste_text_replace)
+            except Exception:
+                pass
+            return event
+
+        def run_tap():
+            mask = CGEventMaskBit(kCGEventKeyDown)
+            tap = CGEventTapCreate(
+                kCGSessionEventTap,
+                kCGHeadInsertEventTap,
+                kCGEventTapOptionListenOnly,
+                mask,
+                tap_callback,
+                None,
+            )
+            if not tap:
+                self.root.after(
+                    0,
+                    lambda: self.set_status(
+                        "Cmd+B недоступен: разреши Accessibility для процесса"
+                    ),
+                )
+                return
+            source = CFMachPortCreateRunLoopSource(None, tap, 0)
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes)
+            CFRunLoopRun()
+
+        threading.Thread(target=run_tap, daemon=True).start()
+
     def handle_undo(self, event=None):
         self.undo_text()
         return "break"
@@ -911,6 +973,28 @@ class TextTyperGUI:
         self.update_text_stats()
         self.text_widget.focus_set()
         self.set_status("Текст вставлен из буфера")
+
+    def paste_text_replace(self):
+        if self.is_typing:
+            return
+
+        try:
+            clipboard_text = self.root.clipboard_get()
+        except tk.TclError:
+            self.set_status("Буфер обмена пуст")
+            return
+
+        if not clipboard_text:
+            self.set_status("Буфер обмена пуст")
+            return
+
+        self.push_undo_separator()
+        self.text_widget.delete("1.0", "end")
+        self.text_widget.insert("1.0", clipboard_text)
+        self.push_undo_separator()
+        self.update_text_stats()
+        self.text_widget.focus_set()
+        self.set_status("Поле заменено текстом из буфера")
 
     def push_undo_separator(self):
         self.cancel_undo_group_timer()

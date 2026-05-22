@@ -357,6 +357,7 @@ class TextTyperGUI:
         self.text_widget.bind("<Control-Cyrillic_che>", self.handle_cut)
         self.text_widget.bind("<Control-Cyrillic_CHE>", self.handle_cut)
         self.text_widget.bind("<Control-KeyPress>", self.handle_control_keypress, add="+")
+        self._start_global_hotkey_listener()
         self.text_widget.bind("<<Paste>>", self.handle_paste)
         self.text_widget.bind("<<Modified>>", self.on_text_modified)
 
@@ -873,6 +874,45 @@ class TextTyperGUI:
         self.push_undo_separator()
         self.set_status("Текст вырезан")
 
+    def handle_start_hotkey(self, event=None):
+        self.start_typing()
+        return "break"
+
+    def _start_global_hotkey_listener(self):
+        user32 = ctypes.windll.user32
+        MOD_CONTROL = 0x0002
+        WM_HOTKEY = 0x0312
+        VK_B = 0x42
+        VK_N = 0x4E
+        HOTKEY_ID_START = 1
+        HOTKEY_ID_PASTE = 2
+
+        def run_loop():
+            ok_b = user32.RegisterHotKey(None, HOTKEY_ID_START, MOD_CONTROL, VK_B)
+            ok_n = user32.RegisterHotKey(None, HOTKEY_ID_PASTE, MOD_CONTROL, VK_N)
+            if not ok_b and not ok_n:
+                self.root.after(
+                    0, lambda: self.set_status("Не удалось зарегистрировать Ctrl+B/Ctrl+N")
+                )
+                return
+            msg = wintypes.MSG()
+            try:
+                while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+                    if msg.message == WM_HOTKEY:
+                        if msg.wParam == HOTKEY_ID_START:
+                            self.root.after(0, self.start_typing)
+                        elif msg.wParam == HOTKEY_ID_PASTE:
+                            self.root.after(0, self.paste_text_replace)
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+            finally:
+                if ok_b:
+                    user32.UnregisterHotKey(None, HOTKEY_ID_START)
+                if ok_n:
+                    user32.UnregisterHotKey(None, HOTKEY_ID_PASTE)
+
+        threading.Thread(target=run_loop, daemon=True).start()
+
     def handle_paste(self, event=None):
         self.paste_text()
         return "break"
@@ -990,6 +1030,28 @@ class TextTyperGUI:
         self.update_text_stats()
         self.text_widget.focus_set()
         self.set_status("Текст вставлен из буфера")
+
+    def paste_text_replace(self):
+        if self.is_typing:
+            return
+
+        try:
+            clipboard_text = self.root.clipboard_get()
+        except tk.TclError:
+            self.set_status("Буфер обмена пуст")
+            return
+
+        if not clipboard_text:
+            self.set_status("Буфер обмена пуст")
+            return
+
+        self.push_undo_separator()
+        self.text_widget.delete("1.0", "end")
+        self.text_widget.insert("1.0", clipboard_text)
+        self.push_undo_separator()
+        self.update_text_stats()
+        self.text_widget.focus_set()
+        self.set_status("Поле заменено текстом из буфера")
 
     def push_undo_separator(self):
         self.cancel_undo_group_timer()
@@ -1128,7 +1190,7 @@ class TextTyperGUI:
 
 
 def main():
-    if platform.system() != "Windows":
+    2if platform.system() != "Windows":
         print("Этот файл предназначен для запуска только в Windows. Используй macos.py на macOS.")
         return
     root = tk.Tk()

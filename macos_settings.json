@@ -1,0 +1,9 @@
+{
+  "delay": "0.1",
+  "start_after": "0",
+  "focus_delay": "0.5",
+  "theme": "dark",
+  "design": "studio",
+  "compact": true,
+  "window_geometry": "736x781+0+33"
+}
