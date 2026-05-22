@@ -1,6 +1,3 @@
-#!/usr/bin/env bash
-# Перепаковывает macos.enc и windows.enc со списком хостов из hosts.txt.
-# Использование: ./repack.sh
 
 set -euo pipefail
 cd "$(dirname "$0")"

@@ -1,19 +1,3 @@
-"""
-Host-bound payload loader.
-
-The real application code lives in encrypted .enc blobs that can only be
-decrypted on devices whose hostname matches one of the allowed names embedded
-at pack time. Anyone can read this loader, but without an approved hostname
-the AEAD check fails and the program exits.
-
-Usage:
-    # Run an encrypted payload (called from macos.py / windows.py):
-    import host_guard
-    host_guard.run("macos.enc")
-
-    # Pack a plaintext source into an encrypted blob (developer-side):
-    python3 host_guard.py pack <src.py> <out.enc> "Hostname-1" "Hostname-2" ...
-"""
 
 import hashlib
 import hmac
