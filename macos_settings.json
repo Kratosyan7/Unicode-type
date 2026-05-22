@@ -1,0 +1,9 @@
+{
+  "delay": "0.1",
+  "start_after": "3",
+  "focus_delay": "0.5",
+  "theme": "light",
+  "design": "native",
+  "compact": true,
+  "window_geometry": "640x460+5+38"
+}
