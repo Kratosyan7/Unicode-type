@@ -1,6 +1,6 @@
 {
   "delay": "0.1",
-  "start_after": "3",
+  "start_after": "0",
   "focus_delay": "0.5",
   "theme": "light",
   "design": "native",
