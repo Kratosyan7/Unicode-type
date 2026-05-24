@@ -4,6 +4,7 @@ windows_payload.py
 __pycache__/
 *.pyc
 .DS_Store
-
+macos_settings.json
+windows_settings.json
 # Локальный список доверенных хостов
 hosts.txt
