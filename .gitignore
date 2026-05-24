@@ -6,5 +6,6 @@ __pycache__/
 .DS_Store
 macos_settings.json
 windows_settings.json
+.gitignore
 # Локальный список доверенных хостов
 hosts.txt
