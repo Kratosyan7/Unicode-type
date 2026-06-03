@@ -2,8 +2,8 @@
   "delay": "0.1",
   "start_after": "0",
   "focus_delay": "0.5",
-  "theme": "light",
-  "design": "native",
+  "theme": "dark",
+  "design": "studio",
   "compact": true,
-  "window_geometry": "601x460+5+38"
+  "window_geometry": "360x563+5+38"
 }
