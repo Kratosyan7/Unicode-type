@@ -1,4 +1,3 @@
-
 import hashlib
 import hmac
 import os
@@ -75,7 +74,9 @@ def _current_hostnames():
             try:
                 out = subprocess.run(
                     ["scutil", "--get", key],
-                    capture_output=True, text=True, timeout=2,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
                 )
                 value = out.stdout.strip()
                 if value:
@@ -97,7 +98,8 @@ def pack(plaintext_bytes, allowed_hostnames):
 
     data_key = secrets.token_bytes(32)
     payload_blob = _encrypt(
-        data_key, plaintext_bytes,
+        data_key,
+        plaintext_bytes,
         stream_domain=b"payload-stream",
         mac_domain=b"payload-mac",
     )
@@ -106,7 +108,8 @@ def pack(plaintext_bytes, allowed_hostnames):
     for name in allowed_hostnames:
         host_key = _host_key(_normalize(name))
         wrap = _encrypt(
-            host_key, data_key,
+            host_key,
+            data_key,
             stream_domain=b"wrap-stream",
             mac_domain=b"wrap-mac",
         )
@@ -127,13 +130,18 @@ def _parse_blob(blob):
     if not blob.startswith(_MAGIC):
         raise ValueError("bad magic")
     pos = len(_MAGIC)
-    (plen,) = struct.unpack(">I", blob[pos:pos + 4]); pos += 4
-    payload = blob[pos:pos + plen]; pos += plen
-    (n,) = struct.unpack(">I", blob[pos:pos + 4]); pos += 4
+    (plen,) = struct.unpack(">I", blob[pos : pos + 4])
+    pos += 4
+    payload = blob[pos : pos + plen]
+    pos += plen
+    (n,) = struct.unpack(">I", blob[pos : pos + 4])
+    pos += 4
     wrapped = []
     for _ in range(n):
-        (wlen,) = struct.unpack(">I", blob[pos:pos + 4]); pos += 4
-        wrapped.append(blob[pos:pos + wlen]); pos += wlen
+        (wlen,) = struct.unpack(">I", blob[pos : pos + 4])
+        pos += 4
+        wrapped.append(blob[pos : pos + wlen])
+        pos += wlen
     return payload, wrapped
 
 
@@ -149,6 +157,7 @@ def _deny():
     try:
         import tkinter as tk
         from tkinter import messagebox
+
         root = tk.Tk()
         root.withdraw()
         messagebox.showerror(
@@ -195,7 +204,9 @@ def _cli_pack(argv):
     plaintext = src_path.read_bytes()
     blob = pack(plaintext, hostnames)
     out_path.write_bytes(blob)
-    print(f"packed {src_path} -> {out_path} ({len(blob)} bytes, {len(hostnames)} host(s))")
+    print(
+        f"packed {src_path} -> {out_path} ({len(blob)} bytes, {len(hostnames)} host(s))"
+    )
 
 
 def _cli_digest(argv):
